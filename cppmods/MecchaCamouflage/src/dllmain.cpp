@@ -10859,7 +10859,20 @@ namespace
             int virtual_side_capture_started{0};
             int virtual_side_capture_failed{0};
             bool side_back_query_started{false};
+            bool side_back_query_prepared{false};
+            bool side_back_query_complete{false};
             bool virtual_side_back_complete{false};
+            std::vector<ScreenHitSample> side_back_query_basis{};
+            std::unordered_set<std::uint64_t> side_back_unique_texels{};
+            Unreal::FVector side_back_query_center{};
+            Unreal::FVector side_back_base_outward{};
+            double side_back_half_width{0.0};
+            double side_back_half_height{0.0};
+            double side_back_ray_distance{0.0};
+            int side_back_query_cursor{0};
+            int side_back_query_total{0};
+            int side_back_query_grid_x{18};
+            int side_back_query_grid_y{30};
             std::vector<VirtualSideCapturePlan> virtual_side_capture_plans{};
             int virtual_side_capture_cursor{0};
             StringType virtual_side_capture_label{STR("<none>")};
@@ -11097,6 +11110,295 @@ namespace
                 narrow_ascii(m_state.current_world),
                 narrow_ascii(m_state.current_pawn),
                 narrow_ascii(m_state.current_component)});
+        }
+
+        auto side_texel_key(double u, double v) const -> std::uint64_t
+        {
+            const auto x = static_cast<std::uint64_t>(std::max(0, std::min(4095, static_cast<int>(u * 4096.0))));
+            const auto y = static_cast<std::uint64_t>(std::max(0, std::min(4095, static_cast<int>(v * 4096.0))));
+            return (y << 32) | x;
+        }
+
+        auto find_or_create_virtual_side_plan(const CharType* label,
+                                              const Unreal::FVector& eye,
+                                              const Unreal::FVector& look_at)
+            -> VirtualSideCapturePlan&
+        {
+            for (auto& plan : m_pipeline_job.virtual_side_capture_plans)
+            {
+                if (plan.label == label)
+                {
+                    return plan;
+                }
+            }
+            VirtualSideCapturePlan plan{};
+            plan.label = label;
+            plan.eye = eye;
+            plan.look_at = look_at;
+            plan.rotation = rotator_from_forward(sub(look_at, eye));
+            m_pipeline_job.virtual_side_capture_plans.push_back(std::move(plan));
+            return m_pipeline_job.virtual_side_capture_plans.back();
+        }
+
+        auto prepare_side_back_query(const std::vector<ScreenHitSample>& front_samples) -> void
+        {
+            m_pipeline_job.side_back_query_basis = front_samples;
+            m_pipeline_job.side_back_unique_texels.clear();
+            m_pipeline_job.virtual_side_capture_plans.clear();
+            m_pipeline_job.virtual_side_capture_cursor = 0;
+            m_pipeline_job.virtual_side_capture_count = 0;
+            m_pipeline_job.virtual_side_capture_started = 0;
+            m_pipeline_job.virtual_side_capture_failed = 0;
+            m_pipeline_job.side_sample_count = 0;
+            m_pipeline_job.back_sample_count = 0;
+            m_pipeline_job.side_inferred_samples = 0;
+            m_pipeline_job.side_back_inferred_color_used = 0;
+            m_pipeline_job.side_back_query_cursor = 0;
+            m_pipeline_job.side_back_query_grid_x = 18;
+            m_pipeline_job.side_back_query_grid_y = 30;
+            m_pipeline_job.side_back_query_total =
+                3 * m_pipeline_job.side_back_query_grid_x * m_pipeline_job.side_back_query_grid_y;
+            m_pipeline_job.side_back_query_started = true;
+            m_pipeline_job.side_back_query_prepared = false;
+            m_pipeline_job.side_back_query_complete = false;
+            m_pipeline_job.virtual_side_back_complete = false;
+            if (front_samples.empty())
+            {
+                m_pipeline_job.side_stats.first_failure = STR("side_back_front_basis_empty");
+                return;
+            }
+
+            Unreal::FVector min_world = front_samples.front().world_position;
+            Unreal::FVector max_world = front_samples.front().world_position;
+            Unreal::FVector sum_world{};
+            m_pipeline_job.side_back_unique_texels.reserve(front_samples.size() + 1024);
+            for (const auto& sample : front_samples)
+            {
+                m_pipeline_job.side_back_unique_texels.insert(side_texel_key(sample.u, sample.v));
+                sum_world = add(sum_world, sample.world_position);
+                min_world = vec(std::min(min_world.X(), sample.world_position.X()),
+                                std::min(min_world.Y(), sample.world_position.Y()),
+                                std::min(min_world.Z(), sample.world_position.Z()));
+                max_world = vec(std::max(max_world.X(), sample.world_position.X()),
+                                std::max(max_world.Y(), sample.world_position.Y()),
+                                std::max(max_world.Z(), sample.world_position.Z()));
+            }
+            m_pipeline_job.side_back_query_center =
+                mul(sum_world, 1.0 / static_cast<double>(std::max<size_t>(1, front_samples.size())));
+            const auto extent = sub(max_world, min_world);
+            m_pipeline_job.side_back_half_width =
+                clamp(std::max({std::abs(extent.X()), std::abs(extent.Y()), 96.0}) * 0.74, 80.0, 260.0);
+            m_pipeline_job.side_back_half_height =
+                clamp(std::max(std::abs(extent.Z()) * 0.74, 120.0), 100.0, 320.0);
+            m_pipeline_job.side_back_ray_distance =
+                clamp(std::max({std::abs(extent.X()), std::abs(extent.Y()), std::abs(extent.Z()), 180.0}) * 2.7,
+                      260.0,
+                      820.0);
+            auto base_outward = sub(m_pipeline_job.frame.eye, m_pipeline_job.side_back_query_center);
+            base_outward = vec(base_outward.X(), base_outward.Y(), 0.0);
+            if (length(base_outward) < 0.01)
+            {
+                base_outward = vec(-m_pipeline_job.frame.forward.X(), -m_pipeline_job.frame.forward.Y(), 0.0);
+            }
+            m_pipeline_job.side_back_base_outward = normalize(base_outward);
+            m_pipeline_job.side_back_query_prepared = true;
+        }
+
+        auto advance_side_back_query(MecchaCamouflage::Core::FrameBudget& budget) -> void
+        {
+            if (!m_pipeline_job.side_back_query_prepared ||
+                m_pipeline_job.side_back_query_complete ||
+                m_state.cancelled)
+            {
+                return;
+            }
+            auto* query = find_screen_space_brush_query_for_pawn(m_pipeline_job.pawn);
+            if (!query)
+            {
+                if (m_pipeline_job.side_stats.first_failure.empty())
+                {
+                    m_pipeline_job.side_stats.first_failure = STR("screen_space_brush_query_unavailable");
+                }
+                m_pipeline_job.side_back_query_complete = true;
+                return;
+            }
+            m_pipeline_job.side_stats.query_name = query->GetFullName();
+            if (!configure_screen_space_brush_query(query, m_pipeline_job.pawn, m_pipeline_job.mesh))
+            {
+                if (m_pipeline_job.side_stats.first_failure.empty())
+                {
+                    m_pipeline_job.side_stats.first_failure = STR("screen_space_brush_query_config_failed");
+                }
+                m_pipeline_job.side_back_query_complete = true;
+                return;
+            }
+
+            struct ViewSpec
+            {
+                const CharType* label;
+                double yaw;
+            };
+            const std::array<ViewSpec, 3> view_specs{{
+                {STR("left"), -90.0},
+                {STR("right"), 90.0},
+                {STR("back"), 180.0},
+            }};
+            constexpr int max_samples_per_view = 320;
+            int attempted_this_tick = 0;
+            while (m_pipeline_job.side_back_query_cursor < m_pipeline_job.side_back_query_total &&
+                   attempted_this_tick < 48 &&
+                   !budget.hard_overrun)
+            {
+                const auto attempt_start = SteadyClock::now();
+                const auto cursor = m_pipeline_job.side_back_query_cursor++;
+                const auto cells_per_view =
+                    std::max(1, m_pipeline_job.side_back_query_grid_x * m_pipeline_job.side_back_query_grid_y);
+                const auto view_index = std::min<int>(2, cursor / cells_per_view);
+                const auto cell_index = cursor % cells_per_view;
+                const auto x = cell_index % m_pipeline_job.side_back_query_grid_x;
+                const auto y = cell_index / m_pipeline_job.side_back_query_grid_x;
+                const auto& spec = view_specs[static_cast<size_t>(view_index)];
+                auto& plan = find_or_create_virtual_side_plan(spec.label,
+                                                              add(m_pipeline_job.side_back_query_center,
+                                                                  mul(normalize(rotate_yaw_pitch(m_pipeline_job.side_back_base_outward,
+                                                                                                 spec.yaw,
+                                                                                                 0.0)),
+                                                                      m_pipeline_job.side_back_ray_distance)),
+                                                              m_pipeline_job.side_back_query_center);
+                if (static_cast<int>(plan.samples.size()) >= max_samples_per_view)
+                {
+                    continue;
+                }
+
+                const auto nx = (static_cast<double>(x) + 0.5) /
+                                static_cast<double>(std::max(1, m_pipeline_job.side_back_query_grid_x));
+                const auto ny = (static_cast<double>(y) + 0.5) /
+                                static_cast<double>(std::max(1, m_pipeline_job.side_back_query_grid_y));
+                const auto lx = (nx - 0.5) * 2.0;
+                const auto ly = (ny - 0.5) * 2.0;
+                const auto forward = normalize(sub(plan.look_at, plan.eye));
+                auto right = normalize(cross(vec(0.0, 0.0, 1.0), forward));
+                if (length(right) < 0.01)
+                {
+                    right = m_pipeline_job.frame.right;
+                }
+                auto up = normalize(cross(forward, right));
+                if (length(up) < 0.01)
+                {
+                    up = vec(0.0, 0.0, 1.0);
+                }
+                const auto target = add(add(m_pipeline_job.side_back_query_center,
+                                            mul(right, lx * m_pipeline_job.side_back_half_width)),
+                                        mul(up, -ly * m_pipeline_job.side_back_half_height));
+                const auto ray_dir = normalize(sub(target, plan.eye));
+                ++m_pipeline_job.side_stats.attempts;
+                ++attempted_this_tick;
+                auto hit = query_brush_from_world_ray(query, plan.eye, ray_dir);
+                if (!hit.params_ok)
+                {
+                    if (m_pipeline_job.side_stats.first_failure.empty())
+                    {
+                        m_pipeline_job.side_stats.first_failure =
+                            hit.failure.empty() ? STR("virtual_side_brush_query_params_failed") : hit.failure;
+                    }
+                    budget.consume(elapsed_ms_since(attempt_start));
+                    continue;
+                }
+                if (!hit.success)
+                {
+                    budget.consume(elapsed_ms_since(attempt_start));
+                    continue;
+                }
+                ++m_pipeline_job.side_stats.success;
+                const auto owner_hit = hit.component == m_pipeline_job.mesh || object_is_or_belongs_to(hit.actor, m_pipeline_job.pawn) ||
+                                       object_is_or_belongs_to(hit.component, m_pipeline_job.pawn);
+                if (!owner_hit)
+                {
+                    budget.consume(elapsed_ms_since(attempt_start));
+                    continue;
+                }
+                ++m_pipeline_job.side_stats.owner_hits;
+                if (!hit.has_uv || !std::isfinite(hit.u) || !std::isfinite(hit.v))
+                {
+                    budget.consume(elapsed_ms_since(attempt_start));
+                    continue;
+                }
+                ++m_pipeline_job.side_stats.uv_hits;
+                const auto texel_key = side_texel_key(hit.u, hit.v);
+                if (!m_pipeline_job.side_back_unique_texels.insert(texel_key).second)
+                {
+                    ++m_pipeline_job.side_stats.duplicate_texels;
+                    budget.consume(elapsed_ms_since(attempt_start));
+                    continue;
+                }
+
+                ScreenHitSample sample{};
+                sample.screen_x = nx * static_cast<double>(std::max(1, m_pipeline_job.viewport.width));
+                sample.screen_y = ny * static_cast<double>(std::max(1, m_pipeline_job.viewport.height));
+                sample.nx = nx;
+                sample.ny = ny;
+                sample.capture_nx = nx;
+                sample.capture_ny = ny;
+                sample.u = clamp(hit.u, 0.0, 0.999999);
+                sample.v = clamp(hit.v, 0.0, 0.999999);
+                sample.world_position = hit.world_position;
+                sample.normal = hit.normal;
+                sample.color = Color{0.0, 0.0, 0.0, 0.85, 0.0};
+                sample.floor_like = false;
+                plan.samples.push_back(sample);
+                ++m_pipeline_job.side_stats.seeds;
+                if (plan.label == STR("back"))
+                {
+                    ++m_pipeline_job.back_sample_count;
+                    ++m_pipeline_job.side_stats.material_hits;
+                }
+                else
+                {
+                    ++m_pipeline_job.side_sample_count;
+                    ++m_pipeline_job.side_stats.projected_pixels;
+                }
+                if (budget.consume(elapsed_ms_since(attempt_start)))
+                {
+                    break;
+                }
+            }
+
+            m_state.side_query_attempts = m_pipeline_job.side_stats.attempts;
+            m_state.side_query_success = m_pipeline_job.side_stats.success;
+            m_state.side_query_uv_hits = m_pipeline_job.side_stats.uv_hits;
+            m_state.side_projected_pixels = m_pipeline_job.side_stats.projected_pixels;
+            m_state.side_material_hits = m_pipeline_job.side_stats.material_hits;
+            m_state.side_seeds = m_pipeline_job.side_sample_count + m_pipeline_job.back_sample_count;
+            m_state.side_duplicate_texels = m_pipeline_job.side_stats.duplicate_texels;
+            if (m_pipeline_job.side_back_query_cursor >= m_pipeline_job.side_back_query_total)
+            {
+                m_pipeline_job.side_back_query_complete = true;
+                m_pipeline_job.virtual_side_capture_plans.erase(
+                    std::remove_if(m_pipeline_job.virtual_side_capture_plans.begin(),
+                                   m_pipeline_job.virtual_side_capture_plans.end(),
+                                   [](const VirtualSideCapturePlan& plan) {
+                                       return plan.samples.empty();
+                                   }),
+                    m_pipeline_job.virtual_side_capture_plans.end());
+                m_pipeline_job.virtual_side_capture_count =
+                    static_cast<int>(m_pipeline_job.virtual_side_capture_plans.size());
+                if (m_pipeline_job.side_stats.first_failure.empty())
+                {
+                    m_pipeline_job.side_stats.first_failure =
+                        m_pipeline_job.virtual_side_capture_count > 0 ? STR("<none>") : STR("virtual_side_no_samples");
+                }
+                const auto side_quality = MecchaCamouflage::Core::evaluate_side_coverage(MecchaCamouflage::Core::SideCoverageInput{
+                    m_pipeline_job.front_coverage_ok,
+                    m_pipeline_job.side_sample_count,
+                    0,
+                    96,
+                    false});
+                m_pipeline_job.side_quality_success = side_quality.side_quality_success;
+                m_pipeline_job.side_quality_failed = side_quality.side_quality_failed;
+                m_pipeline_job.side_quality_failure = RC::ensure_str(side_quality.failure.c_str());
+                m_pipeline_job.back_quality_success = m_pipeline_job.back_sample_count > 0;
+                m_pipeline_job.back_quality_failed = m_pipeline_job.back_sample_count <= 0;
+            }
         }
 
         auto request_camouflage_from_ui() -> void
@@ -12693,106 +12995,57 @@ namespace
                         return;
                     }
 
-                    BrushQuerySideStats side_stats{};
-                    std::vector<ScreenHitSample> side_seed_basis = front_samples;
-                    const auto side_query_start = SteadyClock::now();
-                    auto current_side_samples =
-                        collect_current_capture_side_edge_samples(m_pipeline_job.pawn,
-                                                                  m_pipeline_job.mesh,
-                                                                  m_pipeline_job.controller,
-                                                                  m_pipeline_job.viewport,
-                                                                  front_samples,
-                                                                  m_state,
-                                                                  side_stats,
-                                                                  budget);
-                    side_seed_basis.insert(side_seed_basis.end(),
-                                           current_side_samples.begin(),
-                                           current_side_samples.end());
-                    m_pipeline_job.virtual_side_capture_plans =
-                        build_virtual_side_back_capture_plans(m_pipeline_job.pawn,
-                                                              m_pipeline_job.mesh,
-                                                              m_pipeline_job.viewport,
-                                                              m_pipeline_job.frame,
-                                                              side_seed_basis,
-                                                              m_state,
-                                                              side_stats,
-                                                              budget);
-                    m_pipeline_job.timing.side_query_ms += elapsed_ms_since(side_query_start);
-                    m_pipeline_job.side_stats = side_stats;
-                    m_pipeline_job.side_sample_count = static_cast<int>(current_side_samples.size());
-                    m_pipeline_job.back_sample_count = 0;
-                    for (const auto& plan : m_pipeline_job.virtual_side_capture_plans)
-                    {
-                        const auto count = static_cast<int>(plan.samples.size());
-                        if (plan.label == STR("back"))
-                        {
-                            m_pipeline_job.back_sample_count += count;
-                        }
-                        else
-                        {
-                            m_pipeline_job.side_sample_count += count;
-                        }
-                    }
-                    m_pipeline_job.side_inferred_samples = 0;
-                    m_pipeline_job.side_back_inferred_color_used = 0;
-                    m_pipeline_job.virtual_side_capture_count =
-                        static_cast<int>(m_pipeline_job.virtual_side_capture_plans.size());
-                    for (const auto& side_sample : current_side_samples)
-                    {
-                        m_pipeline_job.apply_samples.push_back(side_sample);
-                        m_pipeline_job.sampled_readback_colors.push_back(std::nullopt);
-                    }
-                    const auto side_quality = MecchaCamouflage::Core::evaluate_side_coverage(MecchaCamouflage::Core::SideCoverageInput{
-                        m_pipeline_job.front_coverage_ok,
-                        m_pipeline_job.side_sample_count,
-                        0,
-                        96,
-                        m_pipeline_job.side_stats.budget_exhausted});
-                    m_pipeline_job.side_quality_success = side_quality.side_quality_success;
-                    m_pipeline_job.side_quality_failed = side_quality.side_quality_failed;
-                    m_pipeline_job.side_quality_failure = RC::ensure_str(side_quality.failure.c_str());
-                    m_pipeline_job.back_quality_success = m_pipeline_job.back_sample_count > 0;
-                    m_pipeline_job.back_quality_failed = m_pipeline_job.back_sample_count <= 0;
+                    prepare_side_back_query(front_samples);
+                    m_pipeline_job.side_quality_success = false;
+                    m_pipeline_job.side_quality_failed = false;
+                    m_pipeline_job.side_quality_failure = STR("side_back_query_pending");
                     m_state.side_enabled = 1;
                     m_state.side_backend = STR("screen_space_brush_query_replicated_virtual_capture");
-                    m_state.side_query_attempts = m_pipeline_job.side_stats.attempts;
-                    m_state.side_query_success = m_pipeline_job.side_stats.success;
-                    m_state.side_query_uv_hits = m_pipeline_job.side_stats.uv_hits;
-                    m_state.side_projected_pixels = m_pipeline_job.side_stats.projected_pixels;
-                    m_state.side_material_hits = m_pipeline_job.side_stats.material_hits;
-                    m_state.side_seeds = m_pipeline_job.side_sample_count + m_pipeline_job.back_sample_count;
                     m_state.side_nearest_sources = 0;
-                    m_state.side_duplicate_texels = m_pipeline_job.side_stats.duplicate_texels;
-                    m_state.side_normal_suspect = m_pipeline_job.side_stats.normal_suspect;
-                    m_state.side_budget_exhausted = m_pipeline_job.side_stats.budget_exhausted ? 1 : 0;
-                    m_pipeline_job.side_back_query_started = true;
+                    m_state.side_budget_exhausted = 0;
                     m_pipeline_job.sampled_front_finalized = true;
                     RC::Output::send<RC::LogLevel::Warning>(
-                        STR("{} side_back_query_planned side_enabled=1 side_backend=screen_space_brush_query_replicated_virtual_capture side_quality_success={} side_quality_failed={} side_quality_failure={} side_samples={} back_samples={} current_side_samples={} virtual_side_capture={} virtual_side_capture_started=0 virtual_side_capture_failed=0 side_back_inferred_color_used=0 nearest_front_color_used=0 side_budget_exhausted={} side_attempts={} side_success={} side_uv_hits={} side_duplicate_texels={} stretch_enabled=0 stretch_backend=disabled_quality_regression stretch_inferred_strokes=0 readback_backend=sampled_pixel_tick bulk_readback_used=0 queued_strokes={} front_streaming_samples={} job_stage=scene_capture_supplement\n"),
+                        STR("{} side_back_query_prepared side_enabled=1 side_backend=screen_space_brush_query_replicated_virtual_capture side_query_cursor=0 side_query_total={} side_query_basis={} side_quality_success=0 side_quality_failed=0 side_quality_failure=side_back_query_pending side_samples=0 back_samples=0 virtual_side_capture=0 virtual_side_capture_started=0 virtual_side_capture_failed=0 side_back_inferred_color_used=0 nearest_front_color_used=0 side_budget_exhausted=0 stretch_enabled=0 stretch_backend=disabled_quality_regression stretch_inferred_strokes=0 readback_backend=sampled_pixel_tick bulk_readback_used=0 queued_strokes={} front_streaming_samples={} job_stage=scene_capture_supplement\n"),
                         ModTag,
-                        m_pipeline_job.side_quality_success ? 1 : 0,
-                        m_pipeline_job.side_quality_failed ? 1 : 0,
-                        m_pipeline_job.side_quality_failure,
-                        m_pipeline_job.side_sample_count,
-                        m_pipeline_job.back_sample_count,
-                        current_side_samples.size(),
-                        m_pipeline_job.virtual_side_capture_count,
-                        m_pipeline_job.side_stats.budget_exhausted ? 1 : 0,
-                        m_pipeline_job.side_stats.attempts,
-                        m_pipeline_job.side_stats.success,
-                        m_pipeline_job.side_stats.uv_hits,
-                        m_pipeline_job.side_stats.duplicate_texels,
+                        m_pipeline_job.side_back_query_total,
+                        m_pipeline_job.side_back_query_basis.size(),
                         m_pipeline_job.apply_cursor,
                         m_pipeline_job.sampled_front_sample_count);
-                    if (m_pipeline_job.sampled_readback_cursor <
-                        static_cast<int>(m_pipeline_job.sampled_readback_colors.size()))
-                    {
-                        return;
-                    }
+                    return;
                 }
 
                 if (m_pipeline_job.sampled_front_finalized &&
                     m_pipeline_job.side_back_query_started &&
+                    !m_pipeline_job.side_back_query_complete)
+                {
+                    const auto side_query_start = SteadyClock::now();
+                    advance_side_back_query(budget);
+                    m_pipeline_job.timing.side_query_ms += elapsed_ms_since(side_query_start);
+                    m_pipeline_job.frame_budget_overrun = m_pipeline_job.frame_budget_overrun || budget.overrun;
+                    m_state.side_budget_exhausted = 0;
+                    RC::Output::send<RC::LogLevel::Warning>(
+                        STR("{} side_back_query_tick side_enabled=1 side_backend=screen_space_brush_query_replicated_virtual_capture side_query_cursor={}/{} side_query_phase_ms={} side_samples={} back_samples={} virtual_side_capture={} side_attempts={} side_success={} side_uv_hits={} side_duplicate_texels={} side_back_query_complete={} side_back_inferred_color_used=0 nearest_front_color_used=0 frame_budget_overrun={} hard_budget_overrun={} budget_ms={} job_stage=scene_capture_supplement\n"),
+                        ModTag,
+                        m_pipeline_job.side_back_query_cursor,
+                        m_pipeline_job.side_back_query_total,
+                        elapsed_ms_since(side_query_start),
+                        m_pipeline_job.side_sample_count,
+                        m_pipeline_job.back_sample_count,
+                        m_pipeline_job.virtual_side_capture_count,
+                        m_pipeline_job.side_stats.attempts,
+                        m_pipeline_job.side_stats.success,
+                        m_pipeline_job.side_stats.uv_hits,
+                        m_pipeline_job.side_stats.duplicate_texels,
+                        m_pipeline_job.side_back_query_complete ? 1 : 0,
+                        budget.overrun ? 1 : 0,
+                        budget.hard_overrun ? 1 : 0,
+                        budget.consumed_ms);
+                    return;
+                }
+
+                if (m_pipeline_job.sampled_front_finalized &&
+                    m_pipeline_job.side_back_query_started &&
+                    m_pipeline_job.side_back_query_complete &&
                     m_pipeline_job.sampled_readback_cursor >=
                         static_cast<int>(m_pipeline_job.sampled_readback_colors.size()) &&
                     m_pipeline_job.virtual_side_capture_cursor <
@@ -12810,6 +13063,7 @@ namespace
                     m_pipeline_job.virtual_side_capture_label = plan.label;
                     const auto capture_width = std::max(1, m_pipeline_job.sampled_capture.width);
                     const auto capture_height = std::max(1, m_pipeline_job.sampled_capture.height);
+                    m_pipeline_job.sampled_capture_transform = ScreenTransform{};
                     m_pipeline_job.sampled_capture =
                         begin_sampled_scene_capture(m_pipeline_job.pawn,
                                                     plan.eye,
