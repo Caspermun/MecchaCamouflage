@@ -8908,9 +8908,9 @@ namespace
         const bool static_hybrid_probe = request.find("\"native_apply_mode\":\"static_hybrid_front_side_probe\"") != std::string::npos ||
                                          request.find("\"route\":\"f10_static_hybrid_front_side_probe\"") != std::string::npos;
         const bool color_transfer_probe = false;
-        const bool front_texture_import = texture_sync_probe;
+        const bool front_texture_import = texture_sync_probe || static_hybrid_probe;
         const bool strict_38923_front_texture_import = texture_sync_probe;
-        const bool diagnostic_import = texture_sync_probe;
+        const bool diagnostic_import = texture_sync_probe || static_hybrid_probe;
         const bool disabled_full_stream = false;
         const bool disabled_paint_stream = false;
         const bool disabled_sample_stream = false;
@@ -9268,7 +9268,7 @@ namespace
                     ",\"front_paint_stream_used\":" + json_bool(disabled_paint_stream || disabled_sample_stream || disabled_metallic_stream) +
                     ",\"disabled_paint_stream_used\":" + json_bool(disabled_paint_stream) +
                     ",\"disabled_sample_stream_used\":" + json_bool(disabled_sample_stream) +
-                    ",\"front_texture_import_used\":" + json_bool(texture_sync_probe) +
+                    ",\"front_texture_import_used\":" + json_bool(front_texture_import) +
                     ",\"front_texture_source_expected\":\"" + std::string(strict_38923_front_texture_import ? "bulk_calibrated_direct_texture" :
                                                                            (front_texture_import ? "sampled_pixel_front_atlas_legacy_explicit_only" : "not_applicable")) + "\"" +
                     ",\"front_texture_parity_target\":\"38923cc_assemble_direct_texture\"" +
@@ -9281,12 +9281,12 @@ namespace
                     ",\"diagnostic_import_channels\":" + std::string(front_texture_import ? "[\"albedo\"]" : "[]") +
                     ",\"texture_sync_probe\":" + json_bool(texture_sync_probe) +
                     ",\"static_hybrid_front_side_probe\":" + json_bool(static_hybrid_probe) +
-                    ",\"static_hybrid_artifact_only\":" + json_bool(static_hybrid_probe) +
+                    ",\"static_hybrid_artifact_only\":false" +
                     ",\"static_hybrid_target_views\":\"front_dominant_plus_side_-60_-45_-30_-15_15_30_45_60\"" +
                     ",\"static_hybrid_back_skipped\":true" +
-                    ",\"static_hybrid_apply_skipped\":true" +
+                    ",\"static_hybrid_apply_skipped\":false" +
                     ",\"color_transfer_probe\":" + json_bool(color_transfer_probe) +
-                    ",\"multiplayer_sync_unverified\":" + json_bool(texture_sync_probe) +
+                    ",\"multiplayer_sync_unverified\":" + json_bool(texture_sync_probe || static_hybrid_probe) +
                     ",\"front_payload_placement_used\":false" +
                     ",\"front_payload_color_used\":false" +
                     ",\"front_only\":" + json_bool(front_paint_route && !front_texture_import) +
@@ -10078,9 +10078,9 @@ namespace
         if (static_hybrid_probe)
         {
             metadata += sdk_write_static_hybrid_artifacts(atlas, static_cast<int>(captured_front.samples.size()), side_back) +
-                        ",\"static_hybrid_output\":\"artifacts_only\"" +
-                        ",\"static_hybrid_import_used\":false" +
-                        ",\"static_hybrid_texture_sync_used\":false" +
+                        ",\"static_hybrid_output\":\"visual_texture_sync_probe\"" +
+                        ",\"static_hybrid_import_used\":true" +
+                        ",\"static_hybrid_texture_sync_used\":true" +
                         ",\"static_hybrid_paint_used\":false" +
                         ",\"static_hybrid_mesh_chart_available\":false" +
                         ",\"static_hybrid_mesh_chart_failure\":\"mesh_chart_unavailable\"" +
@@ -10090,13 +10090,6 @@ namespace
                           "\"front_hits\":" + std::to_string(captured_front.samples.size()) +
                               ",\"side_hits\":" + std::to_string(side_back.side_hits) +
                               ",\"direct_texels\":" + std::to_string(atlas.stats.direct_texels));
-            metadata += "," + bridge_events + ",\"hybrid_artifacts_done\"]";
-            return response_json(true,
-                                 "static_hybrid_front_side_probe_done",
-                                 0,
-                                 0,
-                                 "static hybrid front/side artifacts generated; no paint/import/sync was applied",
-                                 metadata);
         }
         if (strict_38923_front_texture_import && atlas.stats.direct_texels < 500000)
         {
@@ -10212,17 +10205,30 @@ namespace
             };
             const auto albedo_import_bytes = front_texture_import ? make_albedo_import_bytes(SdkAlbedoTransfer::SrgbToLinear) : atlas.albedo;
             const auto albedo_import_hash = hash_bytes(albedo_import_bytes);
-            const bool import_material_channels = texture_sync_probe;
+            const bool import_material_channels = texture_sync_probe || static_hybrid_probe;
+            auto metallic_import_bytes = atlas.metallic;
+            auto roughness_import_bytes = atlas.roughness;
+            if (static_hybrid_probe)
+            {
+                metallic_import_bytes = make_filled_channel(atlas_base_metallic, 0, 0, 0);
+                roughness_import_bytes = make_filled_channel(atlas_base_roughness, 235, 235, 235);
+            }
+            const auto metallic_import_hash = hash_bytes(metallic_import_bytes);
+            const auto roughness_import_hash = hash_bytes(roughness_import_bytes);
             metadata += std::string(",\"front_texture_albedo_import_byte_order\":\"") +
                         "rgba_identity" + "\"" +
                         ",\"front_texture_albedo_import_transfer\":\"" + std::string(front_texture_import ? "srgb_to_linear_for_runtime_material" : "identity") + "\"" +
                         ",\"atlas_import_albedo_hash\":\"" + std::to_string(albedo_import_hash) + "\"" +
+                        ",\"atlas_import_metallic_hash\":\"" + std::to_string(metallic_import_hash) + "\"" +
+                        ",\"atlas_import_roughness_hash\":\"" + std::to_string(roughness_import_hash) + "\"" +
                         ",\"atlas_preview_albedo_hash\":\"" + std::to_string(atlas.hash) + "\"" +
                         ",\"front_texture_import_material_channels\":" + json_bool(import_material_channels) +
-                        ",\"front_texture_material_channel_mode\":\"preserve_existing\"";
+                        ",\"front_texture_material_channel_mode\":\"" + std::string(static_hybrid_probe ? "static_hybrid_metallic_0_roughness_092" : "preserve_existing") + "\"" +
+                        ",\"static_hybrid_material_metallic\":" + std::string(static_hybrid_probe ? "0.0" : "null") +
+                        ",\"static_hybrid_material_roughness\":" + std::string(static_hybrid_probe ? "0.92" : "null");
             const bool import0_ok = sdk_import_channel_bytes(ctx, 0, albedo_import_bytes, import_failure0);
-            const bool import1_ok = front_texture_import && import_material_channels ? sdk_import_channel_bytes(ctx, 1, atlas.metallic, import_failure1) : true;
-            const bool import2_ok = front_texture_import && import_material_channels ? sdk_import_channel_bytes(ctx, 2, atlas.roughness, import_failure2) : true;
+            const bool import1_ok = front_texture_import && import_material_channels ? sdk_import_channel_bytes(ctx, 1, metallic_import_bytes, import_failure1) : true;
+            const bool import2_ok = front_texture_import && import_material_channels ? sdk_import_channel_bytes(ctx, 2, roughness_import_bytes, import_failure2) : true;
             Sleep(100);
             auto after0 = sdk_export_channel_bytes(ref, ctx, 0);
             auto after1 = front_texture_import ? sdk_export_channel_bytes(ref, ctx, 1) : before1;
@@ -10234,8 +10240,8 @@ namespace
                                          (!front_texture_import ||
                                           (import_material_channels
                                                ? (import1_ok && import2_ok &&
-                                                  after1.ok && after1.hash == atlas.metallic_hash &&
-                                                  after2.ok && after2.hash == atlas.roughness_hash)
+                                                  after1.ok && after1.hash == metallic_import_hash &&
+                                                  after2.ok && after2.hash == roughness_import_hash)
                                                : (after1.ok && after2.ok))) &&
                                          hash_changed;
             Sleep(1500);
@@ -10246,13 +10252,13 @@ namespace
                                                             after_settle0.ok && after_settle0.hash == albedo_import_hash &&
                                                             (!front_texture_import ||
                                                              (import_material_channels
-                                                                  ? (after_settle1.ok && after_settle1.hash == atlas.metallic_hash &&
-                                                                     after_settle2.ok && after_settle2.hash == atlas.roughness_hash)
+                                                                  ? (after_settle1.ok && after_settle1.hash == metallic_import_hash &&
+                                                                     after_settle2.ok && after_settle2.hash == roughness_import_hash)
                                                                   : (after_settle1.ok && after_settle2.ok)));
             const bool import_overwritten_after_settle = import_observed &&
                                                          (after_settle0.ok && after_settle0.hash != albedo_import_hash ||
-                                                          (front_texture_import && import_material_channels && after_settle1.ok && after_settle1.hash != atlas.metallic_hash) ||
-                                                          (front_texture_import && import_material_channels && after_settle2.ok && after_settle2.hash != atlas.roughness_hash));
+                                                          (front_texture_import && import_material_channels && after_settle1.ok && after_settle1.hash != metallic_import_hash) ||
+                                                          (front_texture_import && import_material_channels && after_settle2.ok && after_settle2.hash != roughness_import_hash));
             std::string final_import_failure0{};
             std::string final_import_failure1{};
             std::string final_import_failure2{};
@@ -10260,10 +10266,10 @@ namespace
                                               ? sdk_import_channel_bytes(ctx, 0, albedo_import_bytes, final_import_failure0)
                                               : true;
             const bool final_import1_ok = front_texture_import && import_material_channels
-                                              ? sdk_import_channel_bytes(ctx, 1, atlas.metallic, final_import_failure1)
+                                              ? sdk_import_channel_bytes(ctx, 1, metallic_import_bytes, final_import_failure1)
                                               : true;
             const bool final_import2_ok = front_texture_import && import_material_channels
-                                              ? sdk_import_channel_bytes(ctx, 2, atlas.roughness, final_import_failure2)
+                                              ? sdk_import_channel_bytes(ctx, 2, roughness_import_bytes, final_import_failure2)
                                               : true;
             const bool final_import_ok = final_import0_ok && final_import1_ok && final_import2_ok;
             Sleep(front_texture_import ? 120 : 0);
@@ -10274,8 +10280,8 @@ namespace
                                                after_final_import0.ok && after_final_import0.hash == albedo_import_hash &&
                                                (!front_texture_import ||
                                                 (import_material_channels
-                                                     ? (after_final_import1.ok && after_final_import1.hash == atlas.metallic_hash &&
-                                                        after_final_import2.ok && after_final_import2.hash == atlas.roughness_hash)
+                                                     ? (after_final_import1.ok && after_final_import1.hash == metallic_import_hash &&
+                                                        after_final_import2.ok && after_final_import2.hash == roughness_import_hash)
                                                      : (after_final_import1.ok && after_final_import2.ok)));
             bool texture_sync_attempted = false;
             bool texture_sync_relay_ok = false;
