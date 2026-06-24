@@ -200,8 +200,8 @@ def parse_args() -> argparse.Namespace:
             "cpu_mesh_texture_paint_stream",
             "sdk_deep_probe_only",
         ),
-        default="front_atlas_paint_stream",
-        help="Native F10 apply mode; default uses ServerPaintBatch. texture_sync_strict_probe is the only texture-import probe.",
+        default="texture_sync_strict_probe",
+        help="Native F10 apply mode; default uses SDK texture sync strict probe. ServerPaintBatch streams are explicit fallback modes.",
     )
     parser.add_argument(
         "--bridge-retries",
