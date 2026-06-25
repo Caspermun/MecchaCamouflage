@@ -353,6 +353,54 @@ namespace
         return write_runtime_artifact_binary(filename, text);
     }
 
+    auto write_runtime_artifact_bmp_rgb(const wchar_t* filename, int width, int height, const std::vector<std::uint8_t>& rgb) -> bool
+    {
+        if (width <= 0 || height <= 0 ||
+            rgb.size() < static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 3u)
+        {
+            return false;
+        }
+        const int row_stride = ((width * 3 + 3) / 4) * 4;
+        const std::uint32_t pixel_bytes = static_cast<std::uint32_t>(row_stride * height);
+        const std::uint32_t file_size = 54u + pixel_bytes;
+        std::string bytes(static_cast<std::size_t>(file_size), '\0');
+        auto put16 = [&](std::size_t offset, std::uint16_t value) {
+            bytes[offset + 0] = static_cast<char>(value & 0xffu);
+            bytes[offset + 1] = static_cast<char>((value >> 8) & 0xffu);
+        };
+        auto put32 = [&](std::size_t offset, std::uint32_t value) {
+            bytes[offset + 0] = static_cast<char>(value & 0xffu);
+            bytes[offset + 1] = static_cast<char>((value >> 8) & 0xffu);
+            bytes[offset + 2] = static_cast<char>((value >> 16) & 0xffu);
+            bytes[offset + 3] = static_cast<char>((value >> 24) & 0xffu);
+        };
+        bytes[0] = 'B';
+        bytes[1] = 'M';
+        put32(2, file_size);
+        put32(10, 54u);
+        put32(14, 40u);
+        put32(18, static_cast<std::uint32_t>(width));
+        put32(22, static_cast<std::uint32_t>(height));
+        put16(26, 1u);
+        put16(28, 24u);
+        put32(34, pixel_bytes);
+        for (int y = 0; y < height; ++y)
+        {
+            const int src_y = height - 1 - y;
+            const std::size_t dst_row = 54u + static_cast<std::size_t>(y) * static_cast<std::size_t>(row_stride);
+            const std::size_t src_row = static_cast<std::size_t>(src_y) * static_cast<std::size_t>(width) * 3u;
+            for (int x = 0; x < width; ++x)
+            {
+                const std::size_t src = src_row + static_cast<std::size_t>(x) * 3u;
+                const std::size_t dst = dst_row + static_cast<std::size_t>(x) * 3u;
+                bytes[dst + 0] = static_cast<char>(rgb[src + 2]);
+                bytes[dst + 1] = static_cast<char>(rgb[src + 1]);
+                bytes[dst + 2] = static_cast<char>(rgb[src + 0]);
+            }
+        }
+        return write_runtime_artifact_binary(filename, bytes);
+    }
+
     struct ModuleRange
     {
         std::uintptr_t base{0};
@@ -6505,6 +6553,17 @@ namespace
         return color;
     }
 
+    auto sdk_allowed_bulk_color_transforms(const std::string& inner_type) -> std::vector<SdkBulkColorTransform>
+    {
+        if (inner_type == "FLinearColor")
+        {
+            return {SdkBulkColorTransform::LinearToSrgb,
+                    SdkBulkColorTransform::SwapRedBlueLinearToSrgb};
+        }
+        return {SdkBulkColorTransform::Identity,
+                SdkBulkColorTransform::SwapRedBlue};
+    }
+
     auto sdk_decode_bulk_array_candidates(const std::string& backend,
                                           const std::string& function_name,
                                           const std::string& bool_variant,
@@ -6612,7 +6671,7 @@ namespace
     {
         std::vector<SdkBulkRenderTargetImage> out{};
         const auto expected_pixels = width > 0 && height > 0 ? width * height : 0;
-        const char* function_names[]{"ReadRenderTargetRaw", "ReadRenderTarget"};
+        const char* function_names[]{"ReadRenderTarget", "ReadRenderTargetRaw"};
         for (const auto* function_name : function_names)
         {
             const auto function = sdk_find_object_named(ref, function_name);
@@ -6716,7 +6775,10 @@ namespace
                         diagnostics->first_candidate_type = images.front().function_name + ":" + images.front().inner_type;
                         diagnostics->decoded_pixels = images.front().decoded_pixels;
                     }
-                    out.insert(out.end(), std::make_move_iterator(images.begin()), std::make_move_iterator(images.end()));
+                    if (!images.empty())
+                    {
+                        return images;
+                    }
                 }
             }
         }
@@ -6735,7 +6797,7 @@ namespace
         {
             *reinterpret_cast<std::uintptr_t*>(capture_component + meccha_sdk::FieldOffsets::SceneCaptureComponent2D_TextureTarget) = render_target;
             *reinterpret_cast<std::uint8_t*>(capture_component + meccha_sdk::FieldOffsets::SceneCaptureComponent_CaptureSource) =
-                static_cast<std::uint8_t>(meccha_sdk::ESceneCaptureSource::FinalColorLDR);
+                static_cast<std::uint8_t>(meccha_sdk::ESceneCaptureSource::BaseColor);
             auto* capture_flags = reinterpret_cast<std::uint8_t*>(capture_component + meccha_sdk::FieldOffsets::SceneCaptureComponent_CaptureFlags);
             *capture_flags = static_cast<std::uint8_t>(*capture_flags & ~0x03);
             *reinterpret_cast<bool*>(capture_component + meccha_sdk::FieldOffsets::SceneCaptureComponent_bAlwaysPersistRenderingState) = true;
@@ -7043,13 +7105,6 @@ namespace
         bool best_flip_y = false;
         SdkBulkColorTransform best_transform = SdkBulkColorTransform::Identity;
         const std::pair<bool, bool> flip_candidates[]{{false, false}, {true, false}, {false, true}, {true, true}};
-        const SdkBulkColorTransform color_candidates[]{
-            SdkBulkColorTransform::Identity,
-            SdkBulkColorTransform::SwapRedBlue,
-            SdkBulkColorTransform::SrgbToLinear,
-            SdkBulkColorTransform::LinearToSrgb,
-            SdkBulkColorTransform::SwapRedBlueSrgbToLinear,
-            SdkBulkColorTransform::SwapRedBlueLinearToSrgb};
         const int calibration_limit = std::min<int>(128, static_cast<int>(projected.size()));
         const double stride = static_cast<double>(std::max<std::size_t>(1, projected.size())) / static_cast<double>(std::max(1, calibration_limit));
         for (int i = 0; i < calibration_limit; ++i)
@@ -7076,6 +7131,7 @@ namespace
             {
                 continue;
             }
+            const auto color_candidates = sdk_allowed_bulk_color_transforms(candidate.inner_type);
             for (const auto& flip : flip_candidates)
             {
                 for (const auto transform : color_candidates)
@@ -9356,14 +9412,14 @@ namespace
         int viewport_height{0};
         int base_cols{54};
         int base_rows{86};
-        int dense_cols{132};
-        int dense_rows{220};
+        int dense_cols{448};
+        int dense_rows{640};
         int lower_cols{96};
         int lower_rows{78};
         int next_index{0};
         int capture_index{0};
         int paint_index{0};
-        int point_target{14000};
+        int point_target{131072};
         int base_attempts{0};
         int base_hits{0};
         int dense_attempts{0};
@@ -9375,13 +9431,15 @@ namespace
         int screen_fill_index{0};
         int screen_fill_added{0};
         int dedupe_skipped{0};
+        int gbuffer_calls{0};
         int gbuffer_success{0};
+        int gbuffer_failures{0};
         int paint_success{0};
         int process_failures{0};
         int commit_pulses{0};
         int progress_percent{-1};
-        double paint_tick_budget_ms{2.0};
-        int max_paints_per_tick{64};
+        double paint_tick_budget_ms{6.0};
+        int max_paints_per_tick{4096};
         int screen_capture_width{0};
         int screen_capture_height{0};
         int screen_capture_origin_x{0};
@@ -9404,6 +9462,8 @@ namespace
         bool send_batch_called{false};
         bool hide_called{false};
         bool restore_called{false};
+        bool color_hide_requested{false};
+        bool mesh_hidden_for_color{false};
         bool screen_capture_attempted{false};
         bool screen_capture_ready{false};
         double brush_radius{0.008};
@@ -9414,6 +9474,7 @@ namespace
         double rgb_sum_b{0.0};
         double metallic_sum{0.0};
         double roughness_sum{0.0};
+        double gbuffer_sample_elapsed_ms{0.0};
         std::string metadata{};
         std::string first_failure{};
         std::string source_path{"streamed_sample_viewport_gbuffer"};
@@ -9464,7 +9525,7 @@ namespace
         }
         u = clamp01(u);
         v = clamp01(v);
-        constexpr int Quant = 768;
+        constexpr int Quant = 2048;
         if (job->uv_bins.empty())
         {
             job->uv_bins.assign(Quant * Quant, 0);
@@ -9640,12 +9701,19 @@ namespace
         metadata += ",\"paint_at_uv_with_brush_used\":true";
         metadata += ",\"paint_at_screen_position_used\":false";
         metadata += ",\"live_set_hidden_in_game_used\":false";
-        metadata += ",\"high_gbuffer_batched_ported\":\"scene_capture_bulk_readback\"";
-        metadata += ",\"batched_source_required\":true";
+        metadata += ",\"high_gbuffer_batched_ported\":\"scene_capture_basecolor_bulk_readback\"";
+        metadata += ",\"scene_capture_basecolor_required\":true";
+        metadata += ",\"viewport_gbuffer_required\":false";
         metadata += ",\"uv_expand_enabled\":false";
-        metadata += ",\"screen_fill_enabled\":true";
-        metadata += ",\"template_profile\":\"stable_scene_capture_template\"";
-        metadata += ",\"inferred_fields\":[\"brush_radius_formula\",\"scene_capture_hide_component_as_hide_gbuffer_batched\"]";
+        metadata += ",\"screen_fill_enabled\":false";
+        metadata += ",\"template_min_direct_points\":50000";
+        metadata += ",\"template_paint_target_channel\":\"Albedo\"";
+        metadata += ",\"template_material_channel_overwrite\":false";
+        metadata += ",\"template_material_source\":\"preserve_existing_material_channels\"";
+        metadata += ",\"template_paint_albedo_transfer\":\"basecolor_srgb_to_linear_flinearcolor\"";
+        metadata += ",\"template_color_source\":\"scene_capture_basecolor_bulk_readback\"";
+        metadata += ",\"template_profile\":\"high_density_basecolor_scene_capture_template\"";
+        metadata += ",\"inferred_fields\":[\"brush_radius_formula\",\"scene_capture_basecolor_srgb_to_linear\"]";
         if (!ctx.ok)
         {
             complete_template_uv_brush_job(std::make_shared<TemplateUvBrushAsyncJob>(TemplateUvBrushAsyncJob{queued_job}),
@@ -9757,7 +9825,7 @@ namespace
                               0,
                               100,
                               0.0,
-                              "\"source_path\":\"scene_capture_hide_component_bulk_readback\"");
+                              "\"source_path\":\"scene_capture_basecolor_bulk_readback\"");
         if (const auto thread_id = g_game_thread_id.load())
         {
             PostThreadMessageW(thread_id, PaintDispatchMessage, 0, 0);
@@ -9783,6 +9851,15 @@ namespace
                 PostThreadMessageW(thread_id, PaintDispatchMessage, 0, 0);
             }
         };
+        auto post_delayed = [](DWORD delay_ms) {
+            if (const auto thread_id = g_game_thread_id.load())
+            {
+                std::thread([thread_id, delay_ms]() {
+                    Sleep(delay_ms);
+                    PostThreadMessageW(thread_id, PaintDispatchMessage, 0, 0);
+                }).detach();
+            }
+        };
         auto cleanup_state = [&]() {
             constexpr std::uintptr_t OffAutoRecordStrokes = 0x01AC;
             constexpr std::uintptr_t OffAutoFlushStrokes = 0x01AD;
@@ -9792,6 +9869,16 @@ namespace
             safe_copy(reinterpret_cast<void*>(job->component + OffAutoFlushStrokes), &job->old_auto_flush, sizeof(job->old_auto_flush));
             safe_copy(reinterpret_cast<void*>(job->component + OffAutoFlushThreshold), &job->old_auto_flush_threshold, sizeof(job->old_auto_flush_threshold));
             safe_copy(reinterpret_cast<void*>(job->component + OffCurrentBrushSettings), &job->old_brush, sizeof(job->old_brush));
+            if (job->mesh_hidden_for_color && job->mesh)
+            {
+                Reflection restore_ref{};
+                std::string restore_failure{};
+                if (restore_ref.init(restore_failure))
+                {
+                    job->restore_called = sdk_call_two_bools(restore_ref, job->mesh, "SetHiddenInGame", false, true);
+                }
+                job->mesh_hidden_for_color = false;
+            }
         };
         auto fail_job = [&](const char* stage, const std::string& message) {
             cleanup_state();
@@ -9928,9 +10015,7 @@ namespace
                 job->source_sorted = true;
                 job->screen_fill_index = 0;
                 job->progress_percent = -1;
-                job->phase = static_cast<int>(job->points.size()) < job->point_target
-                    ? TemplateUvBrushAsyncJob::Phase::Phase0ScreenFill
-                    : TemplateUvBrushAsyncJob::Phase::CaptureSource;
+                job->phase = TemplateUvBrushAsyncJob::Phase::CaptureSource;
             }
             post_next();
             return;
@@ -10088,6 +10173,13 @@ namespace
                 fail_job("template_phase0_no_template_points", "template phase0 produced no template points");
                 return;
             }
+            constexpr int kTemplateMinDirectPoints = 50000;
+            if (static_cast<int>(job->points.size()) < kTemplateMinDirectPoints)
+            {
+                fail_job("template_direct_points_insufficient",
+                         "template direct HitTest points are below the production quality floor; no screen-fill fallback was used");
+                return;
+            }
 
             Reflection ref{};
             std::string init_failure{};
@@ -10144,15 +10236,15 @@ namespace
                 native_front.samples.push_back(sample);
             }
 
-            write_bridge_progress("template_phase0_hide_gbuffer_batched",
-                                  "phase0 hide_gbuffer_batched capture started",
+            write_bridge_progress("template_phase0_basecolor_capture",
+                                  "capturing hidden-target SceneCapture BaseColor",
                                   52,
                                   100,
                                   job_elapsed_ms(),
                                   "\"template_points\":" + std::to_string(job->points.size()) +
-                                      ",\"source_path\":\"hide_gbuffer_batched\"");
+                                      ",\"source_path\":\"scene_capture_basecolor_bulk_readback\"");
 
-            constexpr int kTemplateCaptureMaxDimension = 1600;
+            constexpr int kTemplateCaptureMaxDimension = 4096;
             int capture_request_width = std::max(1, job->viewport_width);
             int capture_request_height = std::max(1, job->viewport_height);
             const int request_max_dimension = std::max(capture_request_width, capture_request_height);
@@ -10166,12 +10258,19 @@ namespace
             const auto capture = sdk_capture_front_colors(ref, ctx, native_front, capture_request_width, capture_request_height);
             const auto capture_elapsed_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - capture_started).count();
             job->metadata += sdk_capture_metadata(capture);
+            job->metadata += ",\"scene_capture_source\":\"BaseColor\"";
             job->metadata += ",\"template_capture_request_width\":" + std::to_string(capture_request_width);
             job->metadata += ",\"template_capture_request_height\":" + std::to_string(capture_request_height);
             job->metadata += ",\"template_capture_elapsed_ms\":" + std::to_string(capture_elapsed_ms);
             if (!capture.bulk_readback_used || !capture.image_bulk_calibration_ok || capture.samples.empty())
             {
-                fail_job("template_hide_gbuffer_batched_unavailable", "hide_gbuffer_batched bulk capture failed: " + capture.failure);
+                fail_job("template_basecolor_capture_unavailable", "SceneCapture BaseColor bulk capture failed: " + capture.failure);
+                return;
+            }
+            if (static_cast<int>(capture.samples.size()) < kTemplateMinDirectPoints)
+            {
+                fail_job("template_capture_points_insufficient",
+                         "SceneCapture BaseColor returned fewer source-colored points than the production quality floor");
                 return;
             }
 
@@ -10184,9 +10283,9 @@ namespace
                 point.y = clamp01(sample.screen_ny) * static_cast<double>(job->viewport_height);
                 point.u = clamp01(sample.u);
                 point.v = clamp01(sample.v);
-                point.r = clamp01(sample.r);
-                point.g = clamp01(sample.g);
-                point.b = clamp01(sample.b);
+                point.r = sdk_srgb_to_linear_component(sample.r);
+                point.g = sdk_srgb_to_linear_component(sample.g);
+                point.b = sdk_srgb_to_linear_component(sample.b);
                 point.metallic = clamp01(sample.metallic);
                 point.roughness = clamp01(std::max(0.35, sample.roughness));
                 point.has_color = true;
@@ -10200,19 +10299,19 @@ namespace
                 job->metallic_sum += point.metallic;
                 job->roughness_sum += point.roughness;
             }
-            job->source_path = "hide_gbuffer_batched";
+            job->source_path = "scene_capture_basecolor_bulk_readback";
             job->screen_capture_ready = true;
             std::sort(job->points.begin(), job->points.end(), [](const auto& a, const auto& b) {
                 if (a.y == b.y) return a.x < b.x;
                 return a.y < b.y;
             });
-            write_bridge_progress("template_phase0_hide_gbuffer_batched_done",
-                                  "phase0 hide_gbuffer_batched capture done",
+            write_bridge_progress("template_phase0_basecolor_capture_done",
+                                  "SceneCapture BaseColor bulk capture done",
                                   60,
                                   100,
                                   job_elapsed_ms(),
-                                  "\"source_path\":\"hide_gbuffer_batched\"" +
-                                      std::string(",\"bulk_readback_used\":") + json_bool(capture.bulk_readback_used) +
+                                  std::string("\"source_path\":\"scene_capture_basecolor_bulk_readback\"") +
+                                      ",\"bulk_readback_used\":" + json_bool(capture.bulk_readback_used) +
                                       ",\"capture_samples\":" + std::to_string(capture.samples.size()) +
                                       ",\"bulk_backend\":\"" + json_escape(capture.bulk_backend) + "\"");
             job->phase = TemplateUvBrushAsyncJob::Phase::BeginPaint;
@@ -10228,15 +10327,15 @@ namespace
                 fail_job("template_points_unavailable", "template route produced no direct template points");
                 return;
             }
-            job->paint_tick_budget_ms = 2.0;
-            job->max_paints_per_tick = template_count > 12000 ? 72 : 64;
+            job->paint_tick_budget_ms = 6.0;
+            job->max_paints_per_tick = 4096;
             job->auto_flush_threshold = std::max(8192, std::min(32768, template_count));
             const bool enabled = true;
             const bool disabled = false;
             safe_copy(reinterpret_cast<void*>(job->component + OffAutoRecordStrokes), &enabled, sizeof(enabled));
             safe_copy(reinterpret_cast<void*>(job->component + OffAutoFlushStrokes), &disabled, sizeof(disabled));
             safe_copy(reinterpret_cast<void*>(job->component + OffAutoFlushThreshold), &job->auto_flush_threshold, sizeof(job->auto_flush_threshold));
-            const double radius = std::max(0.0016, std::min(0.0042, 0.58 / std::sqrt(static_cast<double>(std::max(1, template_count)))));
+            const double radius = std::max(0.0012, std::min(0.0030, 0.58 / std::sqrt(static_cast<double>(std::max(1, template_count)))));
             job->brush_radius = radius;
             job->brush.Radius = static_cast<float>(radius);
             job->brush.Spacing = 0.08f;
@@ -10267,7 +10366,9 @@ namespace
                                       ",\"gbuffer_prefetched\":" + std::to_string(job->gbuffer_success) +
                                       ",\"gbuffer_streamed\":false" +
                                       ",\"source_path\":\"" + json_escape(job->source_path) + "\"" +
-                                      ",\"albedo_transfer\":\"identity_capture_rgb_for_paint_channel\"" +
+                                      ",\"albedo_transfer\":\"basecolor_srgb_to_linear_flinearcolor\"" +
+                                      ",\"paint_target_channel\":\"Albedo\"" +
+                                      ",\"material_channel_overwrite\":false" +
                                       ",\"lower_rescan_enabled\":false" +
                                       ",\"auto_flush_during_paint\":false" +
                                       ",\"delayed_clear_after_done\":false" +
@@ -10311,9 +10412,14 @@ namespace
                 }
                 meccha_sdk::RuntimePaintableComponent_PaintAtUVWithBrush paint{};
                 paint.Uv = meccha_sdk::FVector2D{point.u, point.v};
-                paint.ChannelData = sdk_make_channel(point.r, point.g, point.b, point.metallic, point.roughness, meccha_sdk::EPaintChannelApplyMode::Override);
+                paint.ChannelData = sdk_make_channel(point.r,
+                                                     point.g,
+                                                     point.b,
+                                                     point.metallic,
+                                                     point.roughness,
+                                                     meccha_sdk::EPaintChannelApplyMode::Override);
                 paint.BrushSettings = job->brush;
-                paint.Channel = meccha_sdk::EPaintChannel::AlbedoMetallicRoughness;
+                paint.Channel = meccha_sdk::EPaintChannel::Albedo;
                 std::string failure{};
                 if (!process_event(job->component, job->paint_uv_function, reinterpret_cast<std::uint8_t*>(&paint), failure))
                 {
@@ -10374,6 +10480,107 @@ namespace
 
             const double denom = std::max(1, job->gbuffer_success);
             std::string metadata = job->metadata;
+            auto write_template_artifacts = [&]() -> std::string {
+                const auto to_display_byte = [](double linear) -> std::uint8_t {
+                    return static_cast<std::uint8_t>(std::round(clamp01(sdk_linear_to_srgb_component(linear)) * 255.0));
+                };
+                const int screen_w = std::max(1, job->viewport_width);
+                const int screen_h = std::max(1, job->viewport_height);
+                std::vector<std::uint8_t> screen_rgb(static_cast<std::size_t>(screen_w) * static_cast<std::size_t>(screen_h) * 3u, 8);
+                constexpr int uv_w = 1024;
+                constexpr int uv_h = 1024;
+                std::vector<std::uint8_t> uv_rgb(static_cast<std::size_t>(uv_w) * static_cast<std::size_t>(uv_h) * 3u, 8);
+                double display_sum_r = 0.0;
+                double display_sum_g = 0.0;
+                double display_sum_b = 0.0;
+                double display_min = 1.0;
+                double display_max = 0.0;
+                for (const auto& point : job->points)
+                {
+                    const auto rb = to_display_byte(point.r);
+                    const auto gb = to_display_byte(point.g);
+                    const auto bb = to_display_byte(point.b);
+                    const double dr = static_cast<double>(rb) / 255.0;
+                    const double dg = static_cast<double>(gb) / 255.0;
+                    const double db = static_cast<double>(bb) / 255.0;
+                    display_sum_r += dr;
+                    display_sum_g += dg;
+                    display_sum_b += db;
+                    display_min = std::min(display_min, std::min(dr, std::min(dg, db)));
+                    display_max = std::max(display_max, std::max(dr, std::max(dg, db)));
+
+                    const int sx = std::max(0, std::min(screen_w - 1, static_cast<int>(std::round(point.x))));
+                    const int sy = std::max(0, std::min(screen_h - 1, static_cast<int>(std::round(point.y))));
+                    for (int dy = -1; dy <= 1; ++dy)
+                    {
+                        const int y = sy + dy;
+                        if (y < 0 || y >= screen_h) continue;
+                        for (int dx = -1; dx <= 1; ++dx)
+                        {
+                            const int x = sx + dx;
+                            if (x < 0 || x >= screen_w) continue;
+                            const std::size_t dst = (static_cast<std::size_t>(y) * static_cast<std::size_t>(screen_w) + static_cast<std::size_t>(x)) * 3u;
+                            screen_rgb[dst + 0] = rb;
+                            screen_rgb[dst + 1] = gb;
+                            screen_rgb[dst + 2] = bb;
+                        }
+                    }
+
+                    const int ux = std::max(0, std::min(uv_w - 1, static_cast<int>(std::round(clamp01(point.u) * static_cast<double>(uv_w - 1)))));
+                    const int uy = std::max(0, std::min(uv_h - 1, static_cast<int>(std::round((1.0 - clamp01(point.v)) * static_cast<double>(uv_h - 1)))));
+                    const std::size_t udst = (static_cast<std::size_t>(uy) * static_cast<std::size_t>(uv_w) + static_cast<std::size_t>(ux)) * 3u;
+                    uv_rgb[udst + 0] = rb;
+                    uv_rgb[udst + 1] = gb;
+                    uv_rgb[udst + 2] = bb;
+                }
+
+                const bool screen_written = write_runtime_artifact_bmp_rgb(L"template_source_capture.bmp", screen_w, screen_h, screen_rgb);
+                const bool points_written = write_runtime_artifact_bmp_rgb(L"template_points_rgb.bmp", screen_w, screen_h, screen_rgb);
+                const bool uv_written = write_runtime_artifact_bmp_rgb(L"template_uv_brush_coverage.bmp", uv_w, uv_h, uv_rgb);
+                const double point_denom = std::max(1.0, static_cast<double>(job->points.size()));
+                std::string quality = "{\n";
+                quality += "  \"route\": \"template_brush_paint\",\n";
+                quality += "  \"artifact_purpose\": \"production template point and color diagnostics\",\n";
+                quality += "  \"color_source\": \"scene_capture_basecolor_bulk_readback\",\n";
+                quality += "  \"albedo_transfer\": \"basecolor_srgb_to_linear_flinearcolor\",\n";
+                quality += "  \"point_count\": " + std::to_string(job->points.size()) + ",\n";
+                quality += "  \"colored_points\": " + std::to_string(job->gbuffer_success) + ",\n";
+                quality += "  \"viewport_width\": " + std::to_string(job->viewport_width) + ",\n";
+                quality += "  \"viewport_height\": " + std::to_string(job->viewport_height) + ",\n";
+                quality += "  \"brush_radius\": " + std::to_string(job->brush_radius) + ",\n";
+                quality += "  \"screen_bbox\": [" + std::to_string(job->bbox_min_nx) + ", " + std::to_string(job->bbox_min_ny) + ", " + std::to_string(job->bbox_max_nx) + ", " + std::to_string(job->bbox_max_ny) + "],\n";
+                quality += "  \"linear_rgb_min\": " + std::to_string(job->rgb_min) + ",\n";
+                quality += "  \"linear_rgb_max\": " + std::to_string(job->rgb_max) + ",\n";
+                quality += "  \"linear_rgb_avg\": [" + std::to_string(job->rgb_sum_r / denom) + ", " + std::to_string(job->rgb_sum_g / denom) + ", " + std::to_string(job->rgb_sum_b / denom) + "],\n";
+                quality += "  \"display_srgb_min\": " + std::to_string(display_min) + ",\n";
+                quality += "  \"display_srgb_max\": " + std::to_string(display_max) + ",\n";
+                quality += "  \"display_srgb_avg\": [" + std::to_string(display_sum_r / point_denom) + ", " + std::to_string(display_sum_g / point_denom) + ", " + std::to_string(display_sum_b / point_denom) + "],\n";
+                quality += "  \"gbuffer_calls\": " + std::to_string(job->gbuffer_calls) + ",\n";
+                quality += "  \"gbuffer_failures\": " + std::to_string(job->gbuffer_failures) + ",\n";
+                quality += "  \"gbuffer_sample_elapsed_ms\": " + std::to_string(job->gbuffer_sample_elapsed_ms) + ",\n";
+                quality += "  \"template_source_capture_bmp_written\": " + std::string(screen_written ? "true" : "false") + ",\n";
+                quality += "  \"template_points_rgb_bmp_written\": " + std::string(points_written ? "true" : "false") + ",\n";
+                quality += "  \"template_uv_brush_coverage_bmp_written\": " + std::string(uv_written ? "true" : "false") + "\n";
+                quality += "}\n";
+                const bool quality_written = write_runtime_artifact_text(L"template_quality.json", quality);
+                std::string compare = "{\n";
+                compare += "  \"route\": \"template_brush_paint\",\n";
+                compare += "  \"artifact_purpose\": \"active production color source summary\",\n";
+                compare += "  \"source\": \"SceneCapture2D.BaseColor\",\n";
+                compare += "  \"scene_capture_used\": true,\n";
+                compare += "  \"paint_albedo_input\": \"same linear FLinearColor values\",\n";
+                compare += "  \"display_srgb_avg\": [" + std::to_string(display_sum_r / point_denom) + ", " + std::to_string(display_sum_g / point_denom) + ", " + std::to_string(display_sum_b / point_denom) + "],\n";
+                compare += "  \"linear_rgb_avg\": [" + std::to_string(job->rgb_sum_r / denom) + ", " + std::to_string(job->rgb_sum_g / denom) + ", " + std::to_string(job->rgb_sum_b / denom) + "]\n";
+                compare += "}\n";
+                const bool compare_written = write_runtime_artifact_text(L"template_gbuffer_compare.json", compare);
+                return std::string(",\"template_artifact_dir\":\"%LOCALAPPDATA%\\\\MecchaCamouflage\\\\runtime\"") +
+                       ",\"template_quality_written\":" + json_bool(quality_written) +
+                       ",\"template_gbuffer_compare_written\":" + json_bool(compare_written) +
+                       ",\"template_source_capture_bmp_written\":" + json_bool(screen_written) +
+                       ",\"template_points_rgb_bmp_written\":" + json_bool(points_written) +
+                       ",\"template_uv_brush_coverage_bmp_written\":" + json_bool(uv_written);
+            };
+            metadata += write_template_artifacts();
             metadata += ",\"source_path\":\"" + json_escape(job->source_path) + "\"";
             metadata += std::string(",\"screen_capture_attempted\":") + json_bool(job->screen_capture_attempted);
             metadata += std::string(",\"screen_capture_ready\":") + json_bool(job->screen_capture_ready);
@@ -10397,7 +10604,10 @@ namespace
             metadata += ",\"template_paint_tick_budget_ms\":" + std::to_string(job->paint_tick_budget_ms);
             metadata += ",\"template_max_paints_per_tick\":" + std::to_string(job->max_paints_per_tick);
             metadata += ",\"template_auto_flush_threshold\":" + std::to_string(job->auto_flush_threshold);
+            metadata += ",\"gbuffer_calls\":" + std::to_string(job->gbuffer_calls);
             metadata += ",\"gbuffer_success\":" + std::to_string(job->gbuffer_success);
+            metadata += ",\"gbuffer_failures\":" + std::to_string(job->gbuffer_failures);
+            metadata += ",\"gbuffer_sample_elapsed_ms\":" + std::to_string(job->gbuffer_sample_elapsed_ms);
             metadata += ",\"paint_uv_success\":" + std::to_string(job->paint_success);
             metadata += ",\"paint_process_failures\":" + std::to_string(job->process_failures);
             metadata += ",\"template_commit_pulses\":" + std::to_string(job->commit_pulses);
@@ -12331,8 +12541,9 @@ namespace
                    "\"message\":\"ok\",\"timing_ms\":{},"
                    "\"metadata\":{\"commands\":[\"ping\",\"capabilities\",\"sdk_probe\",\"sdk_deep_probe\",\"paint_full_route\",\"shutdown\"],"
                    "\"sdk\":\"chameleonEsp_dumper7_1_7_0_min\","
-                   "\"paint_full_route\":\"texture_sync_strict_probe\","
-                   "\"replication\":\"texture_sync_rpc\","
+                   "\"paint_full_route\":\"template_brush_paint\","
+                   "\"texture_import_used\":false,"
+                   "\"replication\":\"recorded_stroke_flush\","
                    "\"multiplayer_replicated\":true}}\n";
         }
         if (line.find("\"type\":\"shutdown\"") != std::string::npos)
