@@ -334,6 +334,13 @@ namespace
         return end == begin ? fallback : value;
     }
 
+    auto format_summary_number(double value, int precision) -> std::string
+    {
+        std::ostringstream out;
+        out << std::fixed << std::setprecision(precision) << value;
+        return out.str();
+    }
+
     auto extract_json_bool(const std::string& text, const std::string& key, bool fallback = false) -> bool
     {
         const std::string needle = std::string("\"") + key + "\":";
@@ -1055,15 +1062,27 @@ namespace
             const auto& details = it->details_json;
             const bool profile_ok = extract_json_bool(details, "mesh_profile_ok", false);
             const auto profile_id = extract_json_string(details, "profile_id");
-            summary.mesh = profile_ok ? "Profile V2 ok" : "Profile unavailable";
+            const auto texture_size = extract_json_number(details, "texture_size", -1.0);
+            const auto mesh_lod = extract_json_number(details, "mesh_profile_lod", -1.0);
+            summary.mesh = profile_ok ? "Profile V2" : "Profile unavailable";
+            if (mesh_lod >= 0.0)
+                summary.mesh += " LOD" + std::to_string(static_cast<long long>(mesh_lod));
+            if (texture_size > 0.0)
+                summary.mesh += " " + std::to_string(static_cast<long long>(texture_size)) + "px";
             if (!profile_id.empty())
                 summary.mesh += " (" + profile_id.substr(0, std::min<std::size_t>(24, profile_id.size())) + ")";
 
             const auto enabled = extract_json_number(details, "planner_samples_enabled", -1.0);
             const auto unsafe = extract_json_number(details, "unsafe_enabled", -1.0);
+            const auto brush_texels = extract_json_number(details, "stroke_radius_texels", -1.0);
+            const auto coverage_texels = extract_json_number(details, "planner_coverage_step_texels", -1.0);
             if (enabled >= 0.0)
             {
                 summary.planner = "strokes " + std::to_string(static_cast<long long>(enabled));
+                if (brush_texels > 0.0)
+                    summary.planner += ", brush " + format_summary_number(brush_texels, 1) + "tx";
+                if (coverage_texels > 0.0)
+                    summary.planner += ", step " + format_summary_number(coverage_texels, 1) + "tx";
                 if (unsafe >= 0.0)
                     summary.planner += ", unsafe " + std::to_string(static_cast<long long>(unsafe));
             }

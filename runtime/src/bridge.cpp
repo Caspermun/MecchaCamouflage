@@ -969,6 +969,8 @@ namespace
         std::string body_region{"unknown"};
         bool has_world_position{false};
         sdk::FVector world_position{};
+        bool has_component_position{false};
+        sdk::FVector component_position{};
     };
 
     auto clamp01(double value) -> double;
@@ -2578,6 +2580,7 @@ namespace
         int project_out_of_view{0};
         double project_delta_sum_px{0.0};
         double project_delta_max_px{0.0};
+        std::string projection_backend{"scene_capture_matrix_unset"};
         int visibility_input{0};
         int visibility_kept{0};
         int visibility_rejected{0};
@@ -3838,6 +3841,7 @@ namespace
                ",\"mesh_profile_schema_version\":" + std::to_string(profile.schema_version) +
                ",\"mesh_profile_source_path\":\"" + json_escape(profile.source_path) + "\"" +
                ",\"mesh_profile_export\":\"" + json_escape(profile.export_name) + "\"" +
+               ",\"mesh_profile_lod\":0" +
                ",\"texture_size\":" + std::to_string(profile.texture_size) +
                ",\"mesh_profile_vertex_count\":" + std::to_string(profile.vertex_count) +
                ",\"mesh_profile_index_count\":" + std::to_string(profile.index_count) +
@@ -4152,6 +4156,43 @@ namespace
         return true;
     }
 
+    auto mesh_first_pose_displacement_metadata(const MeshFirstProfile& profile,
+                                               const std::vector<sdk::FVector>& component_positions) -> std::string
+    {
+        if (component_positions.size() != profile.vertices.size() || profile.vertices.empty())
+        {
+            return "\"pose_skinned_delta_available\":false";
+        }
+        double sum = 0.0;
+        double max_delta = 0.0;
+        int over_one = 0;
+        int over_ten = 0;
+        for (std::size_t i = 0; i < profile.vertices.size(); ++i)
+        {
+            const auto delta = sdk_vec_len(sdk_vec_sub(component_positions[i], profile.vertices[i].position));
+            if (!std::isfinite(delta))
+            {
+                continue;
+            }
+            sum += delta;
+            max_delta = std::max(max_delta, delta);
+            if (delta > 1.0)
+            {
+                ++over_one;
+            }
+            if (delta > 10.0)
+            {
+                ++over_ten;
+            }
+        }
+        const double avg = sum / static_cast<double>(std::max<std::size_t>(1, profile.vertices.size()));
+        return "\"pose_skinned_delta_available\":true"
+               ",\"pose_skinned_delta_avg\":" + std::to_string(avg) +
+               ",\"pose_skinned_delta_max\":" + std::to_string(max_delta) +
+               ",\"pose_skinned_delta_over_1cm\":" + std::to_string(over_one) +
+               ",\"pose_skinned_delta_over_10cm\":" + std::to_string(over_ten);
+    }
+
     struct MeshFirstChannelChecksum
     {
         bool ok{false};
@@ -4326,6 +4367,7 @@ namespace
         double roughness{0.65};
         double metallic{0.0};
         double source_distance_uv{0.0};
+        double source_distance_component{0.0};
         bool source_candidate{false};
         bool unsafe{false};
     };
@@ -4368,11 +4410,17 @@ namespace
         int unsafe_side{0};
         int unsafe_back{0};
         int unsafe_enabled{0};
-        int unsafe_uv_island{0};
         int unsafe_body_region{0};
+        int unsafe_limb_group{0};
+        int unsafe_source_distance{0};
+        int source_depth_rejected{0};
+        int source_facing_rejected{0};
         double source_distance_avg_uv{0.0};
         double source_distance_p95_uv{0.0};
         double source_distance_max_uv{0.0};
+        double source_distance_avg_component{0.0};
+        double source_distance_p95_component{0.0};
+        double source_distance_max_component{0.0};
     };
 
     auto mesh_first_sample_region_count(MeshFirstPlanStats& stats, MeshFirstRegion region) -> int&
@@ -4399,6 +4447,40 @@ namespace
             return stats.side_triangles;
         }
         return stats.back_triangles;
+    }
+
+    auto mesh_first_transfer_group_for_bone(const MeshFirstProfile& profile, int bone_index) -> std::string
+    {
+        if (bone_index < 0 || bone_index >= static_cast<int>(profile.bones.size()))
+        {
+            return {};
+        }
+        const auto name = lower_copy(profile.bones[static_cast<std::size_t>(bone_index)].name);
+        if (name.empty())
+        {
+            return {};
+        }
+        const bool left = name.size() >= 2 &&
+                          (name.rfind("_l") == name.size() - 2 ||
+                           name.rfind(".l") == name.size() - 2 ||
+                           name.rfind("-l") == name.size() - 2);
+        const bool right = name.size() >= 2 &&
+                           (name.rfind("_r") == name.size() - 2 ||
+                            name.rfind(".r") == name.size() - 2 ||
+                            name.rfind("-r") == name.size() - 2);
+        if (!left && !right)
+        {
+            return {};
+        }
+        if (contains_text(name, "leg") || contains_text(name, "foot") || contains_text(name, "hip"))
+        {
+            return left ? "leg_l" : "leg_r";
+        }
+        if (contains_text(name, "arm") || contains_text(name, "hand") || contains_text(name, "shoulder"))
+        {
+            return left ? "arm_l" : "arm_r";
+        }
+        return left ? "left" : "right";
     }
 
     auto mesh_first_uv_triangle_area(double u0, double v0, double u1, double v1, double u2, double v2) -> double
@@ -4638,6 +4720,7 @@ namespace
     {
         constexpr double kMeshFrontThreshold = 0.35;
         constexpr double kMeshBackThreshold = 0.35;
+        constexpr double kMeshSourceFacingThreshold = -0.001;
 
         samples.clear();
         stats = {};
@@ -4700,7 +4783,15 @@ namespace
             const auto world_center = sdk_vec_mul(sdk_vec_add(sdk_vec_add(triangle.world[0], triangle.world[1]), triangle.world[2]), 1.0 / 3.0);
             const double camera_depth = sdk_vec_dot(sdk_vec_sub(world_center, camera_location), camera_direction);
             const double mesh_facing = mesh_first_axis_component(local_normal, region_axis);
-            const bool source_candidate = camera_depth > 0.0;
+            const bool source_candidate = camera_depth > 0.0 && camera_facing < kMeshSourceFacingThreshold;
+            if (camera_depth <= 0.0)
+            {
+                ++stats.source_depth_rejected;
+            }
+            else if (!source_candidate)
+            {
+                ++stats.source_facing_rejected;
+            }
             const auto region = mesh_facing <= -kMeshFrontThreshold
                                     ? MeshFirstRegion::Front
                                     : (mesh_facing >= kMeshBackThreshold ? MeshFirstRegion::Back : MeshFirstRegion::Side);
@@ -4782,7 +4873,8 @@ namespace
         return true;
     }
 
-    auto mesh_first_assign_colors(std::vector<MeshFirstPlanSample>& samples,
+    auto mesh_first_assign_colors(const MeshFirstProfile& profile,
+                                  std::vector<MeshFirstPlanSample>& samples,
                                   const std::vector<FrontSample>& source_samples,
                                   bool enable_front,
                                   bool enable_side,
@@ -4791,26 +4883,45 @@ namespace
                                   double front_back_source_max_uv,
                                   MeshFirstPlanStats& stats) -> void
     {
-        constexpr int kSourceGrid = 128;
-        std::vector<double> distances{};
-        distances.reserve(samples.size());
-        std::vector<std::vector<int>> source_bins(static_cast<std::size_t>(kSourceGrid * kSourceGrid));
-        std::vector<std::string> source_body_regions{};
-        source_body_regions.reserve(source_samples.size());
-        auto source_cell = [=](double value) -> int {
-            return std::max(0, std::min(kSourceGrid - 1, static_cast<int>(std::floor(clamp01(value) * static_cast<double>(kSourceGrid)))));
+        std::vector<double> uv_distances{};
+        std::vector<double> component_distances{};
+        uv_distances.reserve(samples.size());
+        component_distances.reserve(samples.size());
+        auto unknown_body = [](const std::string& value) -> bool {
+            return value.empty() || value == "unknown";
         };
-        auto source_bin_index = [=](int u, int v) -> std::size_t {
-            return static_cast<std::size_t>(v * kSourceGrid + u);
+        auto transfer_key = [&](const std::string& body, const std::string& transfer_group) -> std::string {
+            if (!transfer_group.empty())
+                return transfer_group;
+            if (!unknown_body(body))
+                return body;
+            return "__unknown";
+        };
+        std::vector<std::string> source_keys{};
+        std::vector<std::vector<int>> source_bins{};
+        auto source_bin_for_key = [&](const std::string& key) -> int {
+            for (int i = 0; i < static_cast<int>(source_keys.size()); ++i)
+            {
+                if (source_keys[static_cast<std::size_t>(i)] == key)
+                    return i;
+            }
+            source_keys.push_back(key);
+            source_bins.emplace_back();
+            return static_cast<int>(source_bins.size() - 1);
         };
         for (int i = 0; i < static_cast<int>(source_samples.size()); ++i)
         {
             const auto& source = source_samples[static_cast<std::size_t>(i)];
-            source_body_regions.push_back(lower_copy(source.body_region));
-            source_bins[source_bin_index(source_cell(source.u), source_cell(source.v))].push_back(i);
+            const auto source_body = lower_copy(source.body_region);
+            const auto source_group = mesh_first_transfer_group_for_bone(profile, source.dominant_bone);
+            source_bins[static_cast<std::size_t>(source_bin_for_key(transfer_key(source_body, source_group)))].push_back(i);
         }
-        auto unknown_body = [](const std::string& value) -> bool {
-            return value.empty() || value == "unknown";
+        auto component_distance_limit = [&](MeshFirstRegion region) -> double {
+            if (region == MeshFirstRegion::Side)
+            {
+                return clamp_range(side_source_max_uv * 500.0, 20.0, 80.0);
+            }
+            return clamp_range(front_back_source_max_uv * 250.0, 40.0, 180.0);
         };
         for (auto& sample : samples)
         {
@@ -4822,7 +4933,7 @@ namespace
                 continue;
             }
             bool source_body_mismatch = false;
-            bool source_island_mismatch = false;
+            bool source_limb_mismatch = false;
             if (source_samples.empty())
             {
                 sample.unsafe = true;
@@ -4830,90 +4941,68 @@ namespace
             }
             else
             {
-                const int sample_region = mesh_first_region_code(sample.region);
-                const double max_distance = sample.region == MeshFirstRegion::Side
-                                                ? side_source_max_uv
-                                                : front_back_source_max_uv;
-                const double max_distance_sq = max_distance * max_distance;
-                const int sample_cell_u = source_cell(sample.u);
-                const int sample_cell_v = source_cell(sample.v);
-                const int max_cell_radius = std::max(0,
-                                                     std::min(kSourceGrid - 1,
-                                                              static_cast<int>(std::ceil(max_distance * static_cast<double>(kSourceGrid))) + 1));
                 const auto sample_body = lower_copy(sample.body_region);
+                const auto sample_transfer_group = mesh_first_transfer_group_for_bone(profile, sample.dominant_bone);
                 bool saw_body_candidate = false;
-                bool saw_island_candidate = false;
+                bool saw_limb_candidate = false;
+                const double max_component_distance = component_distance_limit(sample.region);
                 double best_distance_sq = std::numeric_limits<double>::infinity();
+                double best_uv_distance_sq = std::numeric_limits<double>::infinity();
                 const FrontSample* best = nullptr;
-                auto find_best = [&](bool require_same_region) {
-                    for (int radius = 0; radius <= max_cell_radius; ++radius)
+                const auto sample_key = transfer_key(sample_body, sample_transfer_group);
+                int sample_bin = -1;
+                for (int i = 0; i < static_cast<int>(source_keys.size()); ++i)
+                {
+                    if (source_keys[static_cast<std::size_t>(i)] == sample_key)
                     {
-                        for (int y = sample_cell_v - radius; y <= sample_cell_v + radius; ++y)
+                        sample_bin = i;
+                        break;
+                    }
+                }
+                if (sample_bin < 0)
+                {
+                    if (!sample_transfer_group.empty())
+                        source_limb_mismatch = true;
+                    else
+                        source_body_mismatch = true;
+                }
+                const auto* candidate_indices = sample_bin >= 0 ? &source_bins[static_cast<std::size_t>(sample_bin)] : nullptr;
+                if (candidate_indices)
+                {
+                    for (const int source_index : *candidate_indices)
+                    {
+                        const auto& source = source_samples[static_cast<std::size_t>(source_index)];
+                        if (!source.has_component_position)
                         {
-                            if (y < 0 || y >= kSourceGrid)
-                                continue;
-                            for (int x = sample_cell_u - radius; x <= sample_cell_u + radius; ++x)
-                            {
-                                if (x < 0 || x >= kSourceGrid)
-                                    continue;
-                                if (radius > 0 &&
-                                    std::max(std::abs(x - sample_cell_u), std::abs(y - sample_cell_v)) != radius)
-                                {
-                                    continue;
-                                }
-                                const auto& bin = source_bins[source_bin_index(x, y)];
-                                for (const int source_index : bin)
-                                {
-                                    const auto& source = source_samples[static_cast<std::size_t>(source_index)];
-                                    if (require_same_region && source.mesh_region != sample_region)
-                                        continue;
-                                    const auto& source_body = source_body_regions[static_cast<std::size_t>(source_index)];
-                                    const bool same_body = unknown_body(sample_body) ||
-                                                           unknown_body(source_body) ||
-                                                           source_body == sample_body;
-                                    if (!same_body)
-                                    {
-                                        source_body_mismatch = true;
-                                        continue;
-                                    }
-                                    saw_body_candidate = true;
-                                    const bool island_required = sample.region == MeshFirstRegion::Side &&
-                                                                 sample.uv_island >= 0 &&
-                                                                 source.uv_island >= 0;
-                                    if (island_required && source.uv_island != sample.uv_island)
-                                    {
-                                        source_island_mismatch = true;
-                                        continue;
-                                    }
-                                    saw_island_candidate = true;
-                                    const double du = sample.u - source.u;
-                                    const double dv = sample.v - source.v;
-                                    const double distance_sq = du * du + dv * dv;
-                                    if (distance_sq <= max_distance_sq && distance_sq < best_distance_sq)
-                                    {
-                                        best_distance_sq = distance_sq;
-                                        best = &source;
-                                    }
-                                }
-                            }
+                            continue;
                         }
-                        if (best && radius > 1)
+                        saw_body_candidate = true;
+                        saw_limb_candidate = true;
+
+                        const auto component_delta = sdk_vec_sub(sample.local_position, source.component_position);
+                        const double component_distance_sq = sdk_vec_dot(component_delta, component_delta);
+                        if (!std::isfinite(component_distance_sq))
                         {
-                            const double next_ring_min = static_cast<double>(radius - 1) / static_cast<double>(kSourceGrid);
-                            if (next_ring_min * next_ring_min > best_distance_sq)
-                                break;
+                            continue;
+                        }
+                        const double du = sample.u - source.u;
+                        const double dv = sample.v - source.v;
+                        const double uv_distance_sq = du * du + dv * dv;
+                        if (component_distance_sq < best_distance_sq ||
+                            (component_distance_sq == best_distance_sq && uv_distance_sq < best_uv_distance_sq))
+                        {
+                            best_distance_sq = component_distance_sq;
+                            best_uv_distance_sq = uv_distance_sq;
+                            best = &source;
                         }
                     }
-                };
-                find_best(true);
-                if (!best)
-                {
-                    find_best(false);
                 }
                 if (best)
                 {
-                    sample.source_distance_uv = std::sqrt(best_distance_sq);
-                    distances.push_back(sample.source_distance_uv);
+                    sample.source_distance_component = std::sqrt(best_distance_sq);
+                    sample.source_distance_uv = std::sqrt(best_uv_distance_sq);
+                    component_distances.push_back(sample.source_distance_component);
+                    uv_distances.push_back(sample.source_distance_uv);
                     sample.r = clamp01(best->r);
                     sample.g = clamp01(best->g);
                     sample.b = clamp01(best->b);
@@ -4923,8 +5012,14 @@ namespace
                 else
                 {
                     sample.source_distance_uv = std::numeric_limits<double>::infinity();
+                    sample.source_distance_component = std::numeric_limits<double>::infinity();
                 }
-                sample.unsafe = !std::isfinite(sample.source_distance_uv) || sample.source_distance_uv > max_distance;
+                sample.unsafe = !std::isfinite(sample.source_distance_component) ||
+                                sample.source_distance_component > max_component_distance;
+                if (best && sample.unsafe)
+                {
+                    ++stats.unsafe_source_distance;
+                }
                 if (!best)
                 {
                     sample.unsafe = true;
@@ -4932,9 +5027,9 @@ namespace
                     {
                         ++stats.unsafe_body_region;
                     }
-                    else if (!saw_island_candidate && source_island_mismatch)
+                    else if (!saw_limb_candidate && source_limb_mismatch)
                     {
-                        ++stats.unsafe_uv_island;
+                        ++stats.unsafe_limb_group;
                     }
                 }
             }
@@ -4960,19 +5055,33 @@ namespace
                 ++stats.unsafe_enabled;
             }
         }
-        if (!distances.empty())
+        if (!uv_distances.empty())
         {
             double sum = 0.0;
-            for (const auto distance : distances)
+            for (const auto distance : uv_distances)
             {
                 sum += distance;
                 stats.source_distance_max_uv = std::max(stats.source_distance_max_uv, distance);
             }
-            stats.source_distance_avg_uv = sum / static_cast<double>(distances.size());
-            std::sort(distances.begin(), distances.end());
-            const auto index = std::min(distances.size() - 1,
-                                        static_cast<std::size_t>(std::floor(static_cast<double>(distances.size() - 1) * 0.95)));
-            stats.source_distance_p95_uv = distances[index];
+            stats.source_distance_avg_uv = sum / static_cast<double>(uv_distances.size());
+            std::sort(uv_distances.begin(), uv_distances.end());
+            const auto index = std::min(uv_distances.size() - 1,
+                                        static_cast<std::size_t>(std::floor(static_cast<double>(uv_distances.size() - 1) * 0.95)));
+            stats.source_distance_p95_uv = uv_distances[index];
+        }
+        if (!component_distances.empty())
+        {
+            double sum = 0.0;
+            for (const auto distance : component_distances)
+            {
+                sum += distance;
+                stats.source_distance_max_component = std::max(stats.source_distance_max_component, distance);
+            }
+            stats.source_distance_avg_component = sum / static_cast<double>(component_distances.size());
+            std::sort(component_distances.begin(), component_distances.end());
+            const auto index = std::min(component_distances.size() - 1,
+                                        static_cast<std::size_t>(std::floor(static_cast<double>(component_distances.size() - 1) * 0.95)));
+            stats.source_distance_p95_component = component_distances[index];
         }
     }
 
@@ -4995,11 +5104,17 @@ namespace
                ",\"unsafe_side\":" + std::to_string(stats.unsafe_side) +
                ",\"unsafe_back\":" + std::to_string(stats.unsafe_back) +
                ",\"unsafe_enabled\":" + std::to_string(stats.unsafe_enabled) +
-               ",\"unsafe_uv_island\":" + std::to_string(stats.unsafe_uv_island) +
                ",\"unsafe_body_region\":" + std::to_string(stats.unsafe_body_region) +
+               ",\"unsafe_limb_group\":" + std::to_string(stats.unsafe_limb_group) +
+               ",\"unsafe_source_distance\":" + std::to_string(stats.unsafe_source_distance) +
+               ",\"source_depth_rejected\":" + std::to_string(stats.source_depth_rejected) +
+               ",\"source_facing_rejected\":" + std::to_string(stats.source_facing_rejected) +
                ",\"source_distance_avg_uv\":" + std::to_string(stats.source_distance_avg_uv) +
                ",\"source_distance_p95_uv\":" + std::to_string(stats.source_distance_p95_uv) +
-               ",\"source_distance_max_uv\":" + std::to_string(stats.source_distance_max_uv);
+               ",\"source_distance_max_uv\":" + std::to_string(stats.source_distance_max_uv) +
+               ",\"source_distance_avg_component\":" + std::to_string(stats.source_distance_avg_component) +
+               ",\"source_distance_p95_component\":" + std::to_string(stats.source_distance_p95_component) +
+               ",\"source_distance_max_component\":" + std::to_string(stats.source_distance_max_component);
     }
 
     struct MeshFirstReplicationSnapshot
@@ -5387,6 +5502,8 @@ namespace
                                  metadata + ",\"pose_required\":true,\"bind_pose_fallback_used\":false,\"replay_blocked\":true");
         }
         metadata += ",\"skinned_vertex_count\":" + std::to_string(skinned_world_positions.size());
+        metadata += ",";
+        metadata += mesh_first_pose_displacement_metadata(profile, skinned_component_positions);
 
         const auto runtime_triangle_cache = mesh_first_resolve_runtime_triangle_cache(ctx.component, profile);
         metadata += ",\"runtime_triangle_cache_used\":" + std::string(json_bool(runtime_triangle_cache.ok));
@@ -5485,6 +5602,8 @@ namespace
             front.body_region = sample.body_region;
             front.has_world_position = true;
             front.world_position = sample.world_position;
+            front.has_component_position = true;
+            front.component_position = sample.local_position;
             native_front.samples.push_back(front);
         }
         if (native_front.samples.empty())
@@ -5535,7 +5654,8 @@ namespace
                                  metadata + ",\"replay_blocked\":true");
         }
 
-        mesh_first_assign_colors(plan_samples,
+        mesh_first_assign_colors(profile,
+                                 plan_samples,
                                  capture.samples,
                                  enable_front,
                                  enable_side,
@@ -5546,9 +5666,11 @@ namespace
         metadata += ",";
         metadata += mesh_first_plan_stats_metadata(plan_stats);
         metadata += ",\"planner_coverage_step_texels\":" + std::to_string(tuning_coverage_step_texels);
-        metadata += ",\"source_distance_policy\":\"visible_zbuffer_region_preferred_uv_grid\"";
+        metadata += ",\"source_distance_policy\":\"visible_pose_component_nearest\"";
         metadata += ",\"source_distance_side_max_uv\":" + std::to_string(tuning_side_source_max_uv);
         metadata += ",\"source_distance_front_back_max_uv\":" + std::to_string(tuning_front_back_source_max_uv);
+        metadata += ",\"source_distance_side_max_component\":" + std::to_string(clamp_range(tuning_side_source_max_uv * 500.0, 20.0, 80.0));
+        metadata += ",\"source_distance_front_back_max_component\":" + std::to_string(clamp_range(tuning_front_back_source_max_uv * 250.0, 40.0, 180.0));
         metadata += ",\"source_samples\":" + std::to_string(capture.samples.size());
         if (plan_stats.unsafe_enabled > 0)
         {
@@ -7806,6 +7928,48 @@ namespace
         };
         std::vector<ProjectedFrontSample> projected{};
         projected.reserve(native_front.samples.size());
+        const auto capture_forward = sdk_vec_normalize(out.capture_direction);
+        sdk::FVector world_up{0.0, 0.0, 1.0};
+        auto capture_right = sdk_vec_normalize(sdk_vec_cross(world_up, capture_forward));
+        if (sdk_vec_len(capture_right) <= 0.000001)
+        {
+            world_up = {0.0, 1.0, 0.0};
+            capture_right = sdk_vec_normalize(sdk_vec_cross(world_up, capture_forward));
+        }
+        const auto capture_up = sdk_vec_normalize(sdk_vec_cross(capture_forward, capture_right));
+        const double half_fov_radians = out.capture_fov * 3.14159265358979323846 / 360.0;
+        const double tan_half_horizontal = std::tan(half_fov_radians);
+        const double tan_half_vertical = tan_half_horizontal / std::max(0.001, out.capture_aspect);
+        out.projection_backend = "scene_capture_camera_matrix";
+        auto project_to_capture = [&](const sdk::FVector& world, double& sx, double& sy, double& depth) -> bool {
+            if (sdk_vec_len(capture_forward) <= 0.000001 ||
+                sdk_vec_len(capture_right) <= 0.000001 ||
+                sdk_vec_len(capture_up) <= 0.000001 ||
+                !std::isfinite(tan_half_horizontal) ||
+                !std::isfinite(tan_half_vertical) ||
+                tan_half_horizontal <= 0.000001 ||
+                tan_half_vertical <= 0.000001)
+            {
+                return false;
+            }
+            const auto rel = sdk_vec_sub(world, out.capture_location);
+            depth = sdk_vec_dot(rel, capture_forward);
+            if (!std::isfinite(depth) || depth <= 0.000001)
+            {
+                return false;
+            }
+            const double right = sdk_vec_dot(rel, capture_right);
+            const double up = sdk_vec_dot(rel, capture_up);
+            const double ndc_x = right / (depth * tan_half_horizontal);
+            const double ndc_y = up / (depth * tan_half_vertical);
+            if (!std::isfinite(ndc_x) || !std::isfinite(ndc_y))
+            {
+                return false;
+            }
+            sx = (ndc_x * 0.5 + 0.5) * static_cast<double>(out.width);
+            sy = (0.5 - ndc_y * 0.5) * static_cast<double>(out.height);
+            return true;
+        };
         double sum = 0.0;
         int channels = 0;
         bool initialized = false;
@@ -7820,32 +7984,27 @@ namespace
         for (const auto& surface : native_front.samples)
         {
             ++out.project_attempts;
-            const double original_sx = clamp01(surface.screen_nx) * static_cast<double>(viewport_width);
-            const double original_sy = clamp01(surface.screen_ny) * static_cast<double>(viewport_height);
-            double sx = original_sx;
-            double sy = original_sy;
+            double sx = clamp01(surface.screen_nx) * static_cast<double>(out.width);
+            double sy = clamp01(surface.screen_ny) * static_cast<double>(out.height);
             double depth = 0.0;
             bool has_depth = false;
             if (surface.has_world_position)
             {
-                double projected_x = 0.0;
-                double projected_y = 0.0;
-                if (sdk_project_world_to_screen(ref, ctx, surface.world_position, projected_x, projected_y))
-                {
-                    sx = projected_x;
-                    sy = projected_y;
-                    const auto dx = sx - original_sx;
-                    const auto dy = sy - original_sy;
-                    const auto delta = std::sqrt(dx * dx + dy * dy);
-                    out.project_delta_sum_px += delta;
-                    out.project_delta_max_px = std::max(out.project_delta_max_px, delta);
-                }
-                else
+                if (!project_to_capture(surface.world_position, sx, sy, depth))
                 {
                     ++out.project_failed;
                     continue;
                 }
-                depth = sdk_vec_dot(sdk_vec_sub(surface.world_position, out.capture_location), out.capture_direction);
+                double player_projected_x = 0.0;
+                double player_projected_y = 0.0;
+                if (sdk_project_world_to_screen(ref, ctx, surface.world_position, player_projected_x, player_projected_y))
+                {
+                    const auto dx = sx - player_projected_x * capture_scale_x;
+                    const auto dy = sy - player_projected_y * capture_scale_y;
+                    const auto delta = std::sqrt(dx * dx + dy * dy);
+                    out.project_delta_sum_px += delta;
+                    out.project_delta_max_px = std::max(out.project_delta_max_px, delta);
+                }
                 if (!std::isfinite(depth) || depth <= 0.0)
                 {
                     ++out.project_out_of_view;
@@ -7863,24 +8022,24 @@ namespace
                 out.visibility_depth_max = std::max(out.visibility_depth_max, depth);
             }
             const bool outside = sx < 0.0 || sy < 0.0 ||
-                                 sx >= static_cast<double>(viewport_width) ||
-                                 sy >= static_cast<double>(viewport_height);
+                                 sx >= static_cast<double>(out.width) ||
+                                 sy >= static_cast<double>(out.height);
             if (outside)
             {
                 ++out.project_out_of_view;
                 continue;
             }
             ++out.project_success;
-            const auto px = std::max(0, std::min(out.width - 1, static_cast<int>(std::round(sx * capture_scale_x))));
-            const auto py = std::max(0, std::min(out.height - 1, static_cast<int>(std::round(sy * capture_scale_y))));
+            const auto px = std::max(0, std::min(out.width - 1, static_cast<int>(std::round(sx))));
+            const auto py = std::max(0, std::min(out.height - 1, static_cast<int>(std::round(sy))));
             auto projected_surface = surface;
-            projected_surface.screen_nx = clamp01(sx / static_cast<double>(std::max(1, viewport_width)));
-            projected_surface.screen_ny = clamp01(sy / static_cast<double>(std::max(1, viewport_height)));
+            projected_surface.screen_nx = clamp01(sx / static_cast<double>(std::max(1, out.width)));
+            projected_surface.screen_ny = clamp01(sy / static_cast<double>(std::max(1, out.height)));
             projected.push_back(ProjectedFrontSample{projected_surface, px, py, depth, has_depth, {}, false});
         }
         if (projected.empty())
         {
-            out.failure = "front_capture_project_world_to_screen_failed";
+            out.failure = "front_capture_project_to_scene_capture_failed";
             sdk_call_no_params(ref, out.capture_actor, "K2_DestroyActor");
             return out;
         }
@@ -8189,6 +8348,7 @@ namespace
                ",\"capture_direction_x\":" + std::to_string(capture.capture_direction.X) +
                ",\"capture_direction_y\":" + std::to_string(capture.capture_direction.Y) +
                ",\"capture_direction_z\":" + std::to_string(capture.capture_direction.Z) +
+               ",\"front_capture_projection_backend\":\"" + json_escape(capture.projection_backend) + "\"" +
                ",\"front_capture_project_attempts\":" + std::to_string(capture.project_attempts) +
                ",\"front_capture_project_success\":" + std::to_string(capture.project_success) +
                ",\"front_capture_project_failed\":" + std::to_string(capture.project_failed) +

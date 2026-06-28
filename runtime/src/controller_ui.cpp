@@ -705,8 +705,8 @@ namespace meccha
                         }
                         ImGui::EndCombo();
                     }
-                    input_double_setting("Stroke size", tuning.stroke_size_texels, 1.0, 12.0, "%.1f", paint_value_changed);
-                    input_double_setting("Coverage step", tuning.coverage_step_texels, 1.0, 12.0, "%.1f", paint_value_changed);
+                    input_double_setting("Brush size (texels)", tuning.stroke_size_texels, 1.0, 12.0, "%.1f", paint_value_changed);
+                    input_double_setting("Coverage step (texels)", tuning.coverage_step_texels, 1.0, 12.0, "%.1f", paint_value_changed);
                     input_double_setting("Side guard", tuning.side_source_max_uv, 0.001, 0.5, "%.3f", paint_value_changed);
                     input_double_setting("Front/back guard", tuning.front_back_source_max_uv, 0.001, 2.0, "%.3f", paint_value_changed);
                     input_int_setting("Max strokes", tuning.max_strokes, 1000, 100000, paint_value_changed);
