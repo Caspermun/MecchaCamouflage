@@ -759,65 +759,49 @@ namespace
         return {true, std::string("injected pid=") + std::to_string(pid) + " dll=" + wide_to_utf8(dll)};
     }
 
-    auto latest_native_mesh_profile_sidecar(const std::filesystem::path& log_dir) -> std::filesystem::path
+    auto find_mesh_profile_directory(const std::filesystem::path& exe_dir, const std::filesystem::path& log_dir) -> std::filesystem::path
     {
         std::error_code ec;
-        const auto native_dir = log_dir / L"native";
-        if (!std::filesystem::exists(native_dir, ec))
-            return {};
-        std::filesystem::path newest{};
-        std::filesystem::file_time_type newest_time{};
-        bool has_newest = false;
-        for (const auto& entry : std::filesystem::directory_iterator(native_dir, ec))
+        const std::filesystem::path candidates[]{
+            exe_dir / L"mesh-profiles",
+            exe_dir.parent_path() / L"mesh-profiles",
+            log_dir / L"native" / L"mesh-profiles",
+        };
+        for (const auto& candidate : candidates)
+        {
+            if (std::filesystem::exists(candidate, ec) && std::filesystem::is_directory(candidate, ec))
+                return candidate;
+        }
+        (void)log_dir;
+        return {};
+    }
+
+    auto sync_mesh_profile_directory(const std::filesystem::path& exe_dir,
+                                     const std::filesystem::path& log_dir,
+                                     const std::filesystem::path& bridge_path) -> bool
+    {
+        const auto source = find_mesh_profile_directory(exe_dir, log_dir);
+        if (source.empty())
+            return false;
+        std::error_code ec;
+        const auto target = bridge_path.parent_path() / L"mesh-profiles";
+        std::filesystem::create_directories(target, ec);
+        if (ec)
+            return false;
+        bool copied = false;
+        for (const auto& entry : std::filesystem::directory_iterator(source, ec))
         {
             if (ec)
                 break;
             const auto path = entry.path();
             if (path.extension() != L".json")
                 continue;
-            const auto filename = path.filename().wstring();
-            if (filename.find(L".mesh-profile.json") == std::wstring::npos)
-                continue;
-            if (!std::filesystem::exists(path, ec) || std::filesystem::file_size(path, ec) <= 0)
-                continue;
-            const auto write_time = std::filesystem::last_write_time(path, ec);
-            if (!has_newest || write_time > newest_time)
-            {
-                newest = path;
-                newest_time = write_time;
-                has_newest = true;
-            }
+            std::filesystem::copy_file(path, target / path.filename(), std::filesystem::copy_options::overwrite_existing, ec);
+            if (ec)
+                return false;
+            copied = true;
         }
-        return newest;
-    }
-
-    auto find_mesh_profile_sidecar(const std::filesystem::path& exe_dir, const std::filesystem::path& log_dir) -> std::filesystem::path
-    {
-        std::error_code ec;
-        const std::filesystem::path candidates[]{
-            exe_dir / L"runtime-bridge.dll.mesh-profile.json",
-            exe_dir.parent_path() / L"research" / L"mesh_exports" / L"paintman-Chameleon_Content_3Dmodel_cLeon_charactor_paintman_skeltal_paintman.uasset.lod0.json",
-            exe_dir.parent_path().parent_path() / L".build" / L"research" / L"mesh_exports" / L"paintman-Chameleon_Content_3Dmodel_cLeon_charactor_paintman_skeltal_paintman.uasset.lod0.json",
-        };
-        for (const auto& candidate : candidates)
-        {
-            if (std::filesystem::exists(candidate, ec) && std::filesystem::file_size(candidate, ec) > 0)
-                return candidate;
-        }
-        return latest_native_mesh_profile_sidecar(log_dir);
-    }
-
-    auto sync_mesh_profile_sidecar(const std::filesystem::path& exe_dir,
-                                   const std::filesystem::path& log_dir,
-                                   const std::filesystem::path& bridge_path) -> bool
-    {
-        const auto source = find_mesh_profile_sidecar(exe_dir, log_dir);
-        if (source.empty())
-            return false;
-        std::error_code ec;
-        const auto bridge_profile = std::filesystem::path(bridge_path.wstring() + L".mesh-profile.json");
-        std::filesystem::copy_file(source, bridge_profile, std::filesystem::copy_options::overwrite_existing, ec);
-        return !ec && std::filesystem::exists(bridge_profile, ec);
+        return copied;
     }
 
     auto extract_embedded_bridge(const std::filesystem::path& log_dir, int port) -> std::filesystem::path
@@ -852,7 +836,7 @@ namespace
         if (GetModuleFileNameW(nullptr, exe_path, MAX_PATH) > 0)
         {
             const auto exe_dir = std::filesystem::path(exe_path).parent_path();
-            sync_mesh_profile_sidecar(exe_dir, log_dir, bridge_path);
+            sync_mesh_profile_directory(exe_dir, log_dir, bridge_path);
         }
         return bridge_path;
     }
@@ -1029,7 +1013,6 @@ namespace
     auto mode_to_route(const std::string& native_apply_mode) -> std::string
     {
         if (native_apply_mode == "mesh_first_paint") return "f10_mesh_first_paint";
-        if (native_apply_mode == "template_brush_paint") return "f10_template_brush_paint";
         return "unsupported_route";
     }
 
@@ -1047,21 +1030,66 @@ namespace
             out += value;
         };
         if (tuning.enable_front_paint)
-            append("front");
+            append("mesh front");
         if (tuning.enable_side_paint)
-            append("side");
+            append("mesh side");
         if (tuning.enable_back_paint)
-            append("back");
+            append("mesh back");
         return out.empty() ? "none" : out;
     }
 
-    auto research_artifacts_enabled() -> bool
+    struct MeshUiSummary
     {
-        wchar_t buffer[32]{};
-        const DWORD size = GetEnvironmentVariableW(L"MECCHA_RESEARCH_ARTIFACTS", buffer, static_cast<DWORD>(std::size(buffer)));
-        if (size == 0 || size >= std::size(buffer))
-            return false;
-        return buffer[0] == L'1' || buffer[0] == L't' || buffer[0] == L'T' || buffer[0] == L'y' || buffer[0] == L'Y';
+        std::string mesh{};
+        std::string planner{};
+        std::string replay{};
+    };
+
+    auto latest_mesh_ui_summary(const std::vector<meccha::RuntimeEvent>& events) -> MeshUiSummary
+    {
+        MeshUiSummary summary{};
+        for (auto it = events.rbegin(); it != events.rend(); ++it)
+        {
+            if (it->event != "paint_done" && it->event != "paint_failed")
+                continue;
+            const auto& details = it->details_json;
+            const bool profile_ok = extract_json_bool(details, "mesh_profile_ok", false);
+            const auto profile_id = extract_json_string(details, "profile_id");
+            summary.mesh = profile_ok ? "Profile V2 ok" : "Profile unavailable";
+            if (!profile_id.empty())
+                summary.mesh += " (" + profile_id.substr(0, std::min<std::size_t>(24, profile_id.size())) + ")";
+
+            const auto enabled = extract_json_number(details, "planner_samples_enabled", -1.0);
+            const auto unsafe = extract_json_number(details, "unsafe_enabled", -1.0);
+            if (enabled >= 0.0)
+            {
+                summary.planner = "strokes " + std::to_string(static_cast<long long>(enabled));
+                if (unsafe >= 0.0)
+                    summary.planner += ", unsafe " + std::to_string(static_cast<long long>(unsafe));
+            }
+            else
+            {
+                summary.planner = it->stage.empty() ? it->event : it->stage;
+            }
+
+            const auto sent = extract_json_number(details, "server_strokes_sent", -1.0);
+            const auto batches = extract_json_number(details, "server_batch_calls", -1.0);
+            if (sent >= 0.0)
+            {
+                summary.replay = "sent " + std::to_string(static_cast<long long>(sent));
+                if (batches >= 0.0)
+                    summary.replay += ", batches " + std::to_string(static_cast<long long>(batches));
+                const bool local_ok = extract_json_bool(details, "local_visual_sync_ok", true);
+                if (!local_ok)
+                    summary.replay += ", local sync failed";
+            }
+            else
+            {
+                summary.replay = it->level == "error" ? "blocked" : "-";
+            }
+            return summary;
+        }
+        return summary;
     }
 
     auto paint_payload(const Config& config, const ProcessInfo& process) -> std::string
@@ -1070,16 +1098,17 @@ namespace
                        ",\"route\":" + json_string(mode_to_route(config.native_apply_mode)) +
                        ",\"process\":{\"pid\":" + std::to_string(process.pid) +
                        ",\"name\":" + json_string(wide_to_utf8(process.name)) + "}" +
-                       ",\"tuning\":{\"brush_radius\":" + std::to_string(config.tuning.brush_radius) +
-                       ",\"brush_spacing\":" + std::to_string(config.tuning.brush_spacing) +
-                       ",\"server_brush_spacing\":" + std::to_string(config.tuning.server_brush_spacing) +
+                       ",\"tuning\":{\"quality_preset\":" + json_string(config.tuning.quality_preset) +
+                       ",\"stroke_size_texels\":" + std::to_string(config.tuning.stroke_size_texels) +
+                       ",\"coverage_step_texels\":" + std::to_string(config.tuning.coverage_step_texels) +
+                       ",\"side_source_max_uv\":" + std::to_string(config.tuning.side_source_max_uv) +
+                       ",\"front_back_source_max_uv\":" + std::to_string(config.tuning.front_back_source_max_uv) +
+                       ",\"max_strokes\":" + std::to_string(config.tuning.max_strokes) +
                        ",\"server_batch_limit\":" + std::to_string(config.tuning.server_batch_limit) +
                        ",\"server_batch_delay_ms\":" + std::to_string(config.tuning.server_batch_delay_ms) +
                        ",\"enable_front_paint\":" + (config.tuning.enable_front_paint ? "true" : "false") +
                        ",\"enable_side_paint\":" + (config.tuning.enable_side_paint ? "true" : "false") +
                        ",\"enable_back_paint\":" + (config.tuning.enable_back_paint ? "true" : "false") + "}";
-        if (research_artifacts_enabled())
-            payload += ",\"research_artifacts\":true";
         payload += "}";
         return payload;
     }
@@ -1455,9 +1484,12 @@ namespace
                               "",
                               std::string("{\"trigger\":") + json_string(trigger) +
                               ",\"hotkey\":" + json_string(meccha::hotkey_to_string(hotkeys.paint_binding())) +
-                              ",\"brush_radius\":" + std::to_string(persisted_settings.tuning.brush_radius) +
-                              ",\"brush_spacing\":" + std::to_string(persisted_settings.tuning.brush_spacing) +
-                              ",\"server_brush_spacing\":" + std::to_string(persisted_settings.tuning.server_brush_spacing) +
+                              ",\"quality_preset\":" + json_string(persisted_settings.tuning.quality_preset) +
+                              ",\"stroke_size_texels\":" + std::to_string(persisted_settings.tuning.stroke_size_texels) +
+                              ",\"coverage_step_texels\":" + std::to_string(persisted_settings.tuning.coverage_step_texels) +
+                              ",\"side_source_max_uv\":" + std::to_string(persisted_settings.tuning.side_source_max_uv) +
+                              ",\"front_back_source_max_uv\":" + std::to_string(persisted_settings.tuning.front_back_source_max_uv) +
+                              ",\"max_strokes\":" + std::to_string(persisted_settings.tuning.max_strokes) +
                               ",\"server_batch_limit\":" + std::to_string(persisted_settings.tuning.server_batch_limit) +
                               ",\"server_batch_delay_ms\":" + std::to_string(persisted_settings.tuning.server_batch_delay_ms) +
                               ",\"enable_front_paint\":" + (persisted_settings.tuning.enable_front_paint ? "true" : "false") +
@@ -1651,6 +1683,10 @@ namespace
             ui_runtime.bridge_ready = service.bridge_ready;
             ui_runtime.paint_route = config.native_apply_mode;
             ui_runtime.paint_regions = paint_regions_text(persisted_settings.tuning);
+            const auto mesh_summary = latest_mesh_ui_summary(events);
+            ui_runtime.mesh_status = mesh_summary.mesh;
+            ui_runtime.planner_status = mesh_summary.planner;
+            ui_runtime.replay_status = mesh_summary.replay;
             ui_runtime.app_editing = app_editing;
             ui_runtime.paint_editing = paint_editing;
             ui_runtime.recording_hotkey = recording_hotkey;

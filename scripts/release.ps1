@@ -18,9 +18,9 @@ Remove-Item -Recurse -Force $TmpRoot -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $TmpRoot | Out-Null
 
 Copy-Item -Force $ExePath (Join-Path $TmpRoot $([System.IO.Path]::GetFileName($ExePath)))
-$MeshProfile = Join-Path (Split-Path -Parent $ExePath) "runtime-bridge.dll.mesh-profile.json"
-if (Test-Path $MeshProfile -PathType Leaf) {
-    Copy-Item -Force $MeshProfile (Join-Path $TmpRoot "runtime-bridge.dll.mesh-profile.json")
+$MeshProfileDir = Join-Path (Split-Path -Parent $ExePath) "mesh-profiles"
+if (Test-Path $MeshProfileDir -PathType Container) {
+    Copy-Item -Recurse -Force $MeshProfileDir (Join-Path $TmpRoot "mesh-profiles")
 }
 Copy-Item -Force (Join-Path $RuntimeRoot "README.md") (Join-Path $TmpRoot "README.md")
 Copy-Item -Force (Join-Path $RuntimeRoot "LICENSE.txt") (Join-Path $TmpRoot "LICENSE.txt")

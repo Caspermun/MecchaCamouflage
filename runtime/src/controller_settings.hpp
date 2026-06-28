@@ -9,19 +9,22 @@ namespace meccha
 
     struct PaintTuning
     {
-        double brush_radius{0.01};
-        double brush_spacing{0.18};
-        double server_brush_spacing{0.08};
+        std::string quality_preset{"High"};
+        double stroke_size_texels{4.0};
+        double coverage_step_texels{6.0};
+        double side_source_max_uv{0.08};
+        double front_back_source_max_uv{0.45};
+        int max_strokes{25000};
         int server_batch_limit{50};
         int server_batch_delay_ms{300};
         bool enable_front_paint{true};
         bool enable_side_paint{true};
-        bool enable_back_paint{false};
+        bool enable_back_paint{true};
     };
 
     struct AppSettings
     {
-        int layout_version{7};
+        int layout_version{11};
         float panel_x{-1.0f};
         float panel_y{-1.0f};
         float panel_width{1280.0f};

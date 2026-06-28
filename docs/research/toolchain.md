@@ -45,13 +45,16 @@ For direct-bake research, export top SkeletalMesh LOD0 geometry:
 
 This writes generated JSON files to `.build\research\mesh_exports\`. These files include LOD0 positions, normals, UVs, indices, bone influences, reference bones, material slots, skeleton asset, physics asset, and bounds. They are generated research outputs and should not be committed.
 
-Prepare the local runtime mesh profile sidecar after a game update:
+Prepare the local runtime Mesh Profile V2 files after a game update:
 
 ```powershell
 .\scripts\research\prepare-mesh-profile.ps1
 ```
 
-This validates the expected `paintman` LOD0 shape and writes `.build\bin\runtime-bridge.dll.mesh-profile.json`. `make package` includes that sidecar only when it already exists.
+This validates the expected `paintman` LOD0 shape, derives UV islands/body
+regions/triangle normals, and writes
+`.build\bin\mesh-profiles\paintman.mesh-profile-v2.json`. `make package`
+includes `mesh-profiles\*.json` when they already exist.
 
 ## Mesh Planner
 

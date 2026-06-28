@@ -128,19 +128,17 @@ try {
     )
 
     if (-not (Test-Path $BridgeOutput)) { throw "Bridge DLL was not produced: $BridgeOutput" }
-    $MeshProfileOutput = Join-Path $OutDir "runtime-bridge.dll.mesh-profile.json"
-    $ResearchMeshProfile = Join-Path $RuntimeRoot ".build\research\mesh_exports\paintman-Chameleon_Content_3Dmodel_cLeon_charactor_paintman_skeltal_paintman.uasset.lod0.json"
-    if (Test-Path $ResearchMeshProfile -PathType Leaf) {
-        Copy-Item -Force $ResearchMeshProfile $MeshProfileOutput
+    $MeshProfilesOutputDir = Join-Path $OutDir "mesh-profiles"
+    New-Item -ItemType Directory -Force -Path $MeshProfilesOutputDir | Out-Null
+    $PrepareMeshProfile = Join-Path $RuntimeRoot "scripts\research\prepare-mesh-profile.ps1"
+    $ResearchMeshExport = Join-Path $RuntimeRoot ".build\research\mesh_exports\paintman-Chameleon_Content_3Dmodel_cLeon_charactor_paintman_skeltal_paintman.uasset.lod0.json"
+    if (Test-Path $ResearchMeshExport -PathType Leaf) {
+        & $PrepareMeshProfile -RuntimeRoot $RuntimeRoot -MeshPath $ResearchMeshExport -OutPath (Join-Path $MeshProfilesOutputDir "paintman.mesh-profile-v2.json")
     } elseif ($env:LOCALAPPDATA) {
         $NativeProfileDir = Join-Path $env:LOCALAPPDATA "MecchaCamouflage\runtime\native"
         if (Test-Path $NativeProfileDir -PathType Container) {
-            $LatestNativeProfile = Get-ChildItem $NativeProfileDir -Filter "*.mesh-profile.json" |
-                Sort-Object LastWriteTime -Descending |
-                Select-Object -First 1
-            if ($LatestNativeProfile) {
-                Copy-Item -Force $LatestNativeProfile.FullName $MeshProfileOutput
-            }
+            Get-ChildItem $NativeProfileDir -Filter "*.mesh-profile-v2.json" |
+                ForEach-Object { Copy-Item -Force $_.FullName (Join-Path $MeshProfilesOutputDir $_.Name) }
         }
     }
 

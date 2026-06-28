@@ -57,7 +57,7 @@ The formal v1.4.0 paint path should be mesh-first:
 1. Research tools regenerate the local `paintman` mesh profile after game updates.
 2. Runtime resolves the live target, mesh identity, camera state, and current skinned pose.
 3. Planner emits front, side, and back regions from the skinned mesh.
-4. Replay uses only regions enabled in settings. Defaults are front and side enabled, back disabled.
+4. Replay uses only regions enabled in settings. Defaults are front, side, and back enabled.
 5. Unsafe candidates are surfaced and block enabled-region replay; they are not silently skipped.
 6. Validated strokes replay only through `ServerPaintBatch`.
 
@@ -69,7 +69,7 @@ This is different from trying to make runtime sampling denser or orbiting the ca
 2. Use CUE4Parse to load candidate `USkeletalMesh` / `UStaticMesh` packages.
 3. Locate player/body/cosmetic mesh candidates and verify `USkeletalMesh` conversion.
 4. Confirm LOD vertices, indices, UVs, material slots, skeleton reference data, and bind-pose data.
-5. Prepare the release/runtime sidecar with `scripts\research\prepare-mesh-profile.ps1`.
+5. Prepare release/runtime Mesh Profile V2 files with `scripts\research\prepare-mesh-profile.ps1`.
 6. Compare offline mesh identity with runtime target actors/components using `front_mesh_candidates`.
 7. Resolve current skinned pose in the bridge.
 8. Generate one unified front/side/back plan.

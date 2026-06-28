@@ -177,19 +177,30 @@ namespace meccha
         return PaintTuning{};
     }
 
+    auto normalize_quality_preset(const std::string& value) -> std::string
+    {
+        if (value == "Balanced" || value == "High" || value == "Ultra")
+            return value;
+        return "High";
+    }
+
     void clamp_settings(AppSettings& settings)
     {
         settings.panel_width = std::max(1180.0f, settings.panel_width);
         settings.panel_height = std::max(860.0f, settings.panel_height);
         settings.opacity = static_cast<float>(clamp_double(settings.opacity, 0.35, 1.0));
-        settings.tuning.brush_radius = clamp_double(settings.tuning.brush_radius, 0.001, 0.05);
-        settings.tuning.brush_spacing = clamp_double(settings.tuning.brush_spacing, 0.01, 0.5);
-        settings.tuning.server_brush_spacing = clamp_double(settings.tuning.server_brush_spacing, 0.01, 0.5);
+        settings.tuning.quality_preset = normalize_quality_preset(settings.tuning.quality_preset);
+        settings.tuning.stroke_size_texels = clamp_double(settings.tuning.stroke_size_texels, 1.0, 12.0);
+        settings.tuning.coverage_step_texels = clamp_double(settings.tuning.coverage_step_texels, 1.0, 12.0);
+        settings.tuning.side_source_max_uv = clamp_double(settings.tuning.side_source_max_uv, 0.001, 0.50);
+        settings.tuning.front_back_source_max_uv = clamp_double(settings.tuning.front_back_source_max_uv, 0.001, 2.00);
+        settings.tuning.max_strokes = std::max(1000, std::min(100000, settings.tuning.max_strokes));
         settings.tuning.server_batch_limit = std::max(1, std::min(50, settings.tuning.server_batch_limit));
         settings.tuning.server_batch_delay_ms = std::max(1, std::min(1000, settings.tuning.server_batch_delay_ms));
         if (!settings.tuning.enable_front_paint && !settings.tuning.enable_side_paint && !settings.tuning.enable_back_paint)
         {
             settings.tuning.enable_front_paint = true;
+            settings.tuning.enable_back_paint = true;
         }
         if (settings.paint_hotkey.empty())
             settings.paint_hotkey = "F10";
@@ -205,19 +216,23 @@ namespace meccha
         const int layout_version = static_cast<int>(extract_json_number(text, "layout_version", 0.0));
         if (const auto process = extract_json_string(text, "game_process_name"); !process.empty())
             settings.game_process_name = utf8_to_wide(process);
+        settings.panel_x = static_cast<float>(extract_json_number(text, "panel_x", settings.panel_x));
+        settings.panel_y = static_cast<float>(extract_json_number(text, "panel_y", settings.panel_y));
+        settings.panel_width = static_cast<float>(extract_json_number(text, "panel_width", settings.panel_width));
+        settings.panel_height = static_cast<float>(extract_json_number(text, "panel_height", settings.panel_height));
+        settings.always_on_top = extract_json_bool(text, "always_on_top", settings.always_on_top);
+        settings.opacity = static_cast<float>(extract_json_number(text, "opacity", settings.opacity));
+        if (const auto hotkey = extract_json_string(text, "paint_hotkey"); !hotkey.empty())
+            settings.paint_hotkey = hotkey;
         if (layout_version >= settings.layout_version)
         {
-            settings.panel_x = static_cast<float>(extract_json_number(text, "panel_x", settings.panel_x));
-            settings.panel_y = static_cast<float>(extract_json_number(text, "panel_y", settings.panel_y));
-            settings.panel_width = static_cast<float>(extract_json_number(text, "panel_width", settings.panel_width));
-            settings.panel_height = static_cast<float>(extract_json_number(text, "panel_height", settings.panel_height));
-            settings.always_on_top = extract_json_bool(text, "always_on_top", settings.always_on_top);
-            settings.opacity = static_cast<float>(extract_json_number(text, "opacity", settings.opacity));
-            if (const auto hotkey = extract_json_string(text, "paint_hotkey"); !hotkey.empty())
-                settings.paint_hotkey = hotkey;
-            settings.tuning.brush_radius = extract_json_number(text, "brush_radius", settings.tuning.brush_radius);
-            settings.tuning.brush_spacing = extract_json_number(text, "brush_spacing", settings.tuning.brush_spacing);
-            settings.tuning.server_brush_spacing = extract_json_number(text, "server_brush_spacing", settings.tuning.server_brush_spacing);
+            if (const auto preset = extract_json_string(text, "quality_preset"); !preset.empty())
+                settings.tuning.quality_preset = preset;
+            settings.tuning.stroke_size_texels = extract_json_number(text, "stroke_size_texels", settings.tuning.stroke_size_texels);
+            settings.tuning.coverage_step_texels = extract_json_number(text, "coverage_step_texels", settings.tuning.coverage_step_texels);
+            settings.tuning.side_source_max_uv = extract_json_number(text, "side_source_max_uv", settings.tuning.side_source_max_uv);
+            settings.tuning.front_back_source_max_uv = extract_json_number(text, "front_back_source_max_uv", settings.tuning.front_back_source_max_uv);
+            settings.tuning.max_strokes = static_cast<int>(extract_json_number(text, "max_strokes", settings.tuning.max_strokes));
             settings.tuning.server_batch_limit = static_cast<int>(extract_json_number(text, "server_batch_limit", settings.tuning.server_batch_limit));
             settings.tuning.server_batch_delay_ms = static_cast<int>(extract_json_number(text, "server_batch_delay_ms", settings.tuning.server_batch_delay_ms));
             settings.tuning.enable_front_paint = extract_json_bool(text, "enable_front_paint", settings.tuning.enable_front_paint);
@@ -242,9 +257,12 @@ namespace meccha
             "  \"always_on_top\": " + std::string(settings.always_on_top ? "true" : "false") + ",\n" +
             "  \"opacity\": " + std::to_string(settings.opacity) + ",\n" +
             "  \"paint_hotkey\": " + json_string(settings.paint_hotkey) + ",\n" +
-            "  \"brush_radius\": " + std::to_string(settings.tuning.brush_radius) + ",\n" +
-            "  \"brush_spacing\": " + std::to_string(settings.tuning.brush_spacing) + ",\n" +
-            "  \"server_brush_spacing\": " + std::to_string(settings.tuning.server_brush_spacing) + ",\n" +
+            "  \"quality_preset\": " + json_string(settings.tuning.quality_preset) + ",\n" +
+            "  \"stroke_size_texels\": " + std::to_string(settings.tuning.stroke_size_texels) + ",\n" +
+            "  \"coverage_step_texels\": " + std::to_string(settings.tuning.coverage_step_texels) + ",\n" +
+            "  \"side_source_max_uv\": " + std::to_string(settings.tuning.side_source_max_uv) + ",\n" +
+            "  \"front_back_source_max_uv\": " + std::to_string(settings.tuning.front_back_source_max_uv) + ",\n" +
+            "  \"max_strokes\": " + std::to_string(settings.tuning.max_strokes) + ",\n" +
             "  \"server_batch_limit\": " + std::to_string(settings.tuning.server_batch_limit) + ",\n" +
             "  \"server_batch_delay_ms\": " + std::to_string(settings.tuning.server_batch_delay_ms) + ",\n" +
             "  \"enable_front_paint\": " + std::string(settings.tuning.enable_front_paint ? "true" : "false") + ",\n" +

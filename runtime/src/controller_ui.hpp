@@ -15,6 +15,9 @@ namespace meccha
         bool bridge_ready{false};
         std::string paint_route{};
         std::string paint_regions{};
+        std::string mesh_status{};
+        std::string planner_status{};
+        std::string replay_status{};
         bool app_editing{false};
         bool paint_editing{false};
         bool recording_hotkey{false};
