@@ -4013,7 +4013,7 @@ namespace
         }
         if (profiles.empty())
         {
-            failure = "mesh profile catalog is empty; run scripts\\research\\prepare-mesh-profile.ps1";
+            failure = "optional Mesh Profile V2 catalog is empty; using live runtime triangle cache";
         }
         else
         {
