@@ -3234,6 +3234,13 @@ namespace
         std::uintptr_t array_data{0};
         double min_translation_len{0.0};
         double max_translation_len{0.0};
+        bool trusted{false};
+        int validation_score{0};
+        int validation_scale_violations{0};
+        int validation_hierarchy_violations{0};
+        double validation_reference_delta_avg{0.0};
+        double validation_reference_delta_max{0.0};
+        std::string validation_failure{};
         std::vector<sdk::FTransform> component_space_transforms{};
     };
 
@@ -3249,7 +3256,14 @@ namespace
                ",\"pose_array_offset\":" + std::to_string(pose.array_offset) +
                ",\"pose_array_data\":\"" + hex_address(pose.array_data) + "\"" +
                ",\"pose_min_translation_len\":" + std::to_string(pose.min_translation_len) +
-               ",\"pose_max_translation_len\":" + std::to_string(pose.max_translation_len);
+               ",\"pose_max_translation_len\":" + std::to_string(pose.max_translation_len) +
+               ",\"pose_trusted\":" + json_bool(pose.trusted) +
+               ",\"pose_validation_score\":" + std::to_string(pose.validation_score) +
+               ",\"pose_validation_scale_violations\":" + std::to_string(pose.validation_scale_violations) +
+               ",\"pose_validation_hierarchy_violations\":" + std::to_string(pose.validation_hierarchy_violations) +
+               ",\"pose_validation_reference_delta_avg\":" + std::to_string(pose.validation_reference_delta_avg) +
+               ",\"pose_validation_reference_delta_max\":" + std::to_string(pose.validation_reference_delta_max) +
+               ",\"pose_validation_failure\":\"" + json_escape(pose.validation_failure) + "\"";
     }
 
     auto sdk_read_pose_array_at(Reflection& ref,
@@ -4142,6 +4156,135 @@ namespace
             failure = "profile_bone_hierarchy_unresolved";
             return false;
         }
+        return true;
+    }
+
+    auto mesh_first_validate_pose_for_profile(const MeshFirstProfile& profile,
+                                              SdkPoseResolveResult& pose) -> bool
+    {
+        pose.trusted = false;
+        pose.validation_score = 0;
+        pose.validation_scale_violations = 0;
+        pose.validation_hierarchy_violations = 0;
+        pose.validation_reference_delta_avg = 0.0;
+        pose.validation_reference_delta_max = 0.0;
+        pose.validation_failure.clear();
+        if (!pose.ok)
+        {
+            pose.validation_failure = "pose_not_resolved";
+            return false;
+        }
+        if (profile.bone_count <= 0 ||
+            static_cast<int>(profile.bones.size()) != profile.bone_count ||
+            static_cast<int>(pose.component_space_transforms.size()) < profile.bone_count)
+        {
+            pose.validation_failure = "pose_profile_count_mismatch";
+            return false;
+        }
+
+        std::vector<sdk::FTransform> reference_component_transforms{};
+        std::string reference_failure{};
+        if (!mesh_first_build_reference_component_transforms(profile, reference_component_transforms, reference_failure))
+        {
+            pose.validation_failure = reference_failure.empty() ? "reference_pose_unavailable" : reference_failure;
+            return false;
+        }
+
+        double delta_sum = 0.0;
+        int delta_count = 0;
+        for (int bone_index = 0; bone_index < profile.bone_count; ++bone_index)
+        {
+            const auto& current = pose.component_space_transforms[static_cast<std::size_t>(bone_index)];
+            if (sdk_transform_score(current) <= 0)
+            {
+                ++pose.validation_scale_violations;
+                continue;
+            }
+            const double scale_sum = std::abs(current.Scale3D.X) + std::abs(current.Scale3D.Y) + std::abs(current.Scale3D.Z);
+            if (!std::isfinite(scale_sum) || scale_sum < 0.01 || scale_sum > 30.0)
+            {
+                ++pose.validation_scale_violations;
+            }
+            const double delta = sdk_vec_len(sdk_vec_sub(current.Translation,
+                                                         reference_component_transforms[static_cast<std::size_t>(bone_index)].Translation));
+            if (std::isfinite(delta))
+            {
+                delta_sum += delta;
+                pose.validation_reference_delta_max = std::max(pose.validation_reference_delta_max, delta);
+                ++delta_count;
+            }
+        }
+        if (delta_count > 0)
+        {
+            pose.validation_reference_delta_avg = delta_sum / static_cast<double>(delta_count);
+        }
+
+        for (const auto& bone : profile.bones)
+        {
+            if (bone.index < 0 || bone.index >= profile.bone_count || bone.parent_index < 0)
+            {
+                continue;
+            }
+            if (bone.parent_index >= profile.bone_count)
+            {
+                ++pose.validation_hierarchy_violations;
+                continue;
+            }
+            const auto& ref_child = reference_component_transforms[static_cast<std::size_t>(bone.index)];
+            const auto& ref_parent = reference_component_transforms[static_cast<std::size_t>(bone.parent_index)];
+            const auto& cur_child = pose.component_space_transforms[static_cast<std::size_t>(bone.index)];
+            const auto& cur_parent = pose.component_space_transforms[static_cast<std::size_t>(bone.parent_index)];
+            const double bind_len = sdk_vec_len(sdk_vec_sub(ref_child.Translation, ref_parent.Translation));
+            const double pose_len = sdk_vec_len(sdk_vec_sub(cur_child.Translation, cur_parent.Translation));
+            const double max_len = std::max(12.0, bind_len * 3.5 + 18.0);
+            if (!std::isfinite(bind_len) || !std::isfinite(pose_len) || pose_len > max_len)
+            {
+                ++pose.validation_hierarchy_violations;
+            }
+        }
+
+        const auto lower_source = lower_copy(pose.source);
+        const bool named_pose_source =
+            contains_text(lower_source, "component") ||
+            contains_text(lower_source, "spacebase") ||
+            contains_text(lower_source, "space") ||
+            contains_text(lower_source, "bone") ||
+            contains_text(lower_source, "cached");
+        const bool generic_scan_source = lower_source.rfind("guarded_component_array_scan", 0) == 0;
+        const int allowed_hierarchy_violations = std::max(1, profile.bone_count / 10);
+        pose.validation_score =
+            pose.valid_transform_count * 10 -
+            pose.validation_scale_violations * 100 -
+            pose.validation_hierarchy_violations * 50 +
+            (named_pose_source ? 200 : 0) -
+            (generic_scan_source ? 50 : 0);
+
+        if (pose.valid_transform_count != profile.bone_count)
+        {
+            pose.validation_failure = "pose_valid_transform_count_mismatch";
+            return false;
+        }
+        if (pose.validation_scale_violations > 0)
+        {
+            pose.validation_failure = "pose_scale_or_transform_invalid";
+            return false;
+        }
+        if (pose.validation_hierarchy_violations > allowed_hierarchy_violations)
+        {
+            pose.validation_failure = "pose_hierarchy_distance_invalid";
+            return false;
+        }
+        if (!std::isfinite(pose.validation_reference_delta_avg) ||
+            !std::isfinite(pose.validation_reference_delta_max) ||
+            pose.validation_reference_delta_avg > 250.0 ||
+            pose.validation_reference_delta_max > 600.0)
+        {
+            pose.validation_failure = "pose_reference_delta_invalid";
+            return false;
+        }
+
+        pose.trusted = true;
+        pose.validation_failure = "ok";
         return true;
     }
 
@@ -5074,18 +5217,17 @@ namespace
         samples.push_back(sample);
     }
 
-    auto mesh_first_generate_plan_samples_from_runtime_cache(const MeshFirstProfile& profile,
-                                                             const std::vector<MeshFirstRuntimeTriangle>& triangles,
-                                                             const std::vector<sdk::FVector>& skinned_component_positions,
-                                                             const std::vector<sdk::FVector>& skinned_world_positions,
-                                                             const sdk::FVector& camera_location,
-                                                             const sdk::FVector& camera_direction,
-                                                             char region_axis,
-                                                             double coverage_step_texels,
-                                                             int max_strokes,
-                                                             std::vector<MeshFirstPlanSample>& samples,
-                                                             MeshFirstPlanStats& stats,
-                                                             std::string& failure) -> bool
+    auto mesh_first_generate_plan_samples_from_skinned_pose(const MeshFirstProfile& profile,
+                                                            const std::vector<sdk::FVector>& skinned_component_positions,
+                                                            const std::vector<sdk::FVector>& skinned_world_positions,
+                                                            const sdk::FVector& camera_location,
+                                                            const sdk::FVector& camera_direction,
+                                                            char region_axis,
+                                                            double coverage_step_texels,
+                                                            int max_strokes,
+                                                            std::vector<MeshFirstPlanSample>& samples,
+                                                            MeshFirstPlanStats& stats,
+                                                            std::string& failure) -> bool
     {
         constexpr double kMeshFrontThreshold = 0.35;
         constexpr double kMeshBackThreshold = 0.35;
@@ -5093,7 +5235,10 @@ namespace
 
         samples.clear();
         stats = {};
-        if (triangles.empty() || profile.triangles.size() != triangles.size())
+        const int expected_triangles = profile.index_count / 3;
+        if (expected_triangles <= 0 ||
+            static_cast<int>(profile.indices.size()) < profile.index_count ||
+            static_cast<int>(profile.triangles.size()) != expected_triangles)
         {
             failure = "planner_profile_triangle_mismatch";
             return false;
@@ -5108,9 +5253,8 @@ namespace
         const double step_uv = clamp_range(coverage_step_texels, 1.0, 64.0) / texture_size;
         samples.reserve(std::min<std::size_t>(static_cast<std::size_t>(std::max(1, max_strokes)) + 1, 100000));
 
-        for (std::size_t tri = 0; tri < triangles.size(); ++tri)
+        for (std::size_t tri = 0; tri < static_cast<std::size_t>(expected_triangles); ++tri)
         {
-            auto triangle = triangles[tri];
             const auto& meta = profile.triangles[tri];
             const std::size_t index_base = tri * 3;
             if (index_base + 2 >= profile.indices.size())
@@ -5118,6 +5262,7 @@ namespace
                 ++stats.invalid_triangles;
                 continue;
             }
+            MeshFirstRuntimeTriangle triangle{};
             bool valid_indices = true;
             for (int vertex_slot = 0; vertex_slot < 3; ++vertex_slot)
             {
@@ -5127,6 +5272,11 @@ namespace
                     valid_indices = false;
                     continue;
                 }
+                const auto vertex = static_cast<std::size_t>(vertex_index);
+                triangle.local[vertex_slot] = skinned_component_positions[vertex];
+                triangle.world[vertex_slot] = skinned_world_positions[vertex];
+                triangle.uv[vertex_slot].X = profile.vertices[vertex].u;
+                triangle.uv[vertex_slot].Y = profile.vertices[vertex].v;
             }
             if (!valid_indices)
             {
@@ -5135,11 +5285,11 @@ namespace
             }
             const auto world_normal = sdk_vec_normalize(sdk_vec_cross(sdk_vec_sub(triangle.world[1], triangle.world[0]),
                                                                       sdk_vec_sub(triangle.world[2], triangle.world[0])));
-            auto local_normal = sdk_vec_normalize(meta.local_normal);
+            auto local_normal = sdk_vec_normalize(sdk_vec_cross(sdk_vec_sub(triangle.local[1], triangle.local[0]),
+                                                               sdk_vec_sub(triangle.local[2], triangle.local[0])));
             if (sdk_vec_len(local_normal) <= 0.000001)
             {
-                local_normal = sdk_vec_normalize(sdk_vec_cross(sdk_vec_sub(triangle.local[1], triangle.local[0]),
-                                                               sdk_vec_sub(triangle.local[2], triangle.local[0])));
+                local_normal = sdk_vec_normalize(meta.local_normal);
             }
             if (sdk_vec_len(world_normal) <= 0.000001 || sdk_vec_len(local_normal) <= 0.000001)
             {
@@ -5980,12 +6130,21 @@ namespace
                               4,
                               0.0,
                               "\"pipeline\":\"mesh_first_paint\",\"mesh_profile_bone_count\":" + std::to_string(profile.bone_count));
-        const auto pose = sdk_resolve_skinned_pose(ref, selected_mesh.mesh, profile.bone_count);
+        auto pose = sdk_resolve_skinned_pose(ref, selected_mesh.mesh, profile.bone_count);
+        if (pose.ok && !mesh_first_validate_pose_for_profile(profile, pose))
+        {
+            pose.stage = "pose_untrusted";
+            pose.message = "current skinned pose candidate failed validation: " + pose.validation_failure;
+        }
         metadata += ",";
         metadata += sdk_pose_result_metadata(pose);
         if (!pose.ok)
         {
             return response_json(false, pose.stage.c_str(), 0, 1, pose.message, metadata + ",\"bind_pose_fallback_used\":false,\"replay_blocked\":true");
+        }
+        if (!pose.trusted)
+        {
+            return response_json(false, "pose_untrusted", 0, 1, pose.message, metadata + ",\"bind_pose_fallback_used\":false,\"replay_blocked\":true");
         }
 
         write_bridge_progress("planner_build",
@@ -6038,27 +6197,31 @@ namespace
         metadata += ",\"runtime_triangle_cache_stride\":" + std::to_string(runtime_triangle_cache.stride);
         metadata += ",\"runtime_triangle_cache_triangles\":" + std::to_string(runtime_triangle_cache.triangle_count);
         metadata += ",\"runtime_triangle_cache_profile_uv_avg_error\":" + std::to_string(runtime_triangle_cache.profile_uv_avg_error);
-        metadata += ",\"planner_position_source\":\"runtime_paintable_cached_current_triangles\"";
-        metadata += ",\"pose_used_for_projection\":false";
-        metadata += ",\"pose_used_for_replay_anchor\":false";
-        if (!runtime_triangle_cache.ok)
+        metadata += ",\"runtime_triangle_cache_failure\":\"" + json_escape(runtime_triangle_cache.failure) + "\"";
+        metadata += ",\"planner_position_source\":\"profile_v2_skinned_pose\"";
+        metadata += ",\"pose_used_for_projection\":true";
+        metadata += ",\"pose_used_for_replay_anchor\":true";
+        if (runtime_triangle_cache.ok)
         {
-            return response_json(false,
-                                 runtime_triangle_cache.failure.empty() ? "runtime_triangle_cache_unavailable" : runtime_triangle_cache.failure.c_str(),
-                                 0,
-                                 1,
-                                 "RuntimePaintable cached triangles are unavailable; mesh-first paint cannot plan safely",
-                                 metadata + ",\"replay_blocked\":true");
+            auto runtime_coordinate_probe_triangles = runtime_triangle_cache.triangles;
+            const auto runtime_coordinate_selection =
+                mesh_first_select_runtime_triangle_coordinates(runtime_coordinate_probe_triangles, component_to_world);
+            metadata += ",\"runtime_triangle_coordinate_mode\":\"" + json_escape(runtime_coordinate_selection.mode) + "\"";
+            metadata += ",\"runtime_triangle_coordinates_swapped\":" + std::string(runtime_coordinate_selection.swapped ? "true" : "false");
+            metadata += ",\"runtime_triangle_coordinate_samples\":" + std::to_string(runtime_coordinate_selection.samples);
+            metadata += ",\"runtime_triangle_coordinate_direct_avg_error\":" + std::to_string(runtime_coordinate_selection.direct_avg_error);
+            metadata += ",\"runtime_triangle_coordinate_swapped_avg_error\":" + std::to_string(runtime_coordinate_selection.swapped_avg_error);
+            metadata += ",\"runtime_triangle_coordinate_selected_avg_error\":" + std::to_string(runtime_coordinate_selection.selected_avg_error);
         }
-        auto runtime_coordinate_probe_triangles = runtime_triangle_cache.triangles;
-        const auto runtime_coordinate_selection =
-            mesh_first_select_runtime_triangle_coordinates(runtime_coordinate_probe_triangles, component_to_world);
-        metadata += ",\"runtime_triangle_coordinate_mode\":\"" + json_escape(runtime_coordinate_selection.mode) + "\"";
-        metadata += ",\"runtime_triangle_coordinates_swapped\":" + std::string(runtime_coordinate_selection.swapped ? "true" : "false");
-        metadata += ",\"runtime_triangle_coordinate_samples\":" + std::to_string(runtime_coordinate_selection.samples);
-        metadata += ",\"runtime_triangle_coordinate_direct_avg_error\":" + std::to_string(runtime_coordinate_selection.direct_avg_error);
-        metadata += ",\"runtime_triangle_coordinate_swapped_avg_error\":" + std::to_string(runtime_coordinate_selection.swapped_avg_error);
-        metadata += ",\"runtime_triangle_coordinate_selected_avg_error\":" + std::to_string(runtime_coordinate_selection.selected_avg_error);
+        else
+        {
+            metadata += ",\"runtime_triangle_coordinate_mode\":\"unavailable\"";
+            metadata += ",\"runtime_triangle_coordinates_swapped\":false";
+            metadata += ",\"runtime_triangle_coordinate_samples\":0";
+            metadata += ",\"runtime_triangle_coordinate_direct_avg_error\":0";
+            metadata += ",\"runtime_triangle_coordinate_swapped_avg_error\":0";
+            metadata += ",\"runtime_triangle_coordinate_selected_avg_error\":0";
+        }
 
         const auto viewport = sdk_get_viewport_info(ref, ctx);
         if (viewport.width <= 0 || viewport.height <= 0)
@@ -6089,46 +6252,49 @@ namespace
         metadata += ",\"camera_direction_x\":" + std::to_string(camera_direction.X);
         metadata += ",\"camera_direction_y\":" + std::to_string(camera_direction.Y);
         metadata += ",\"camera_direction_z\":" + std::to_string(camera_direction.Z);
-        const auto runtime_projection_selection =
-            mesh_first_select_runtime_triangle_projection_coordinates(ref,
-                                                                     ctx,
-                                                                     runtime_triangle_cache.triangles,
-                                                                     component_to_world,
-                                                                     center_ray.location,
-                                                                     camera_direction,
-                                                                     viewport);
-        metadata += ",\"runtime_triangle_projection_mode\":\"" + json_escape(runtime_projection_selection.mode) + "\"";
-        metadata += ",\"runtime_triangle_projection_samples\":" + std::to_string(runtime_projection_selection.samples);
-        metadata += ",\"runtime_triangle_projection_source_candidates\":" + std::to_string(runtime_projection_selection.source_candidates);
-        metadata += ",\"runtime_triangle_projection_project_ok\":" + std::to_string(runtime_projection_selection.project_ok);
-        metadata += ",\"runtime_triangle_projection_inside_view\":" + std::to_string(runtime_projection_selection.inside_view);
-        metadata += ",\"runtime_triangle_projection_best_score\":" + std::to_string(runtime_projection_selection.best_score);
-        metadata += ",\"runtime_triangle_projection_summary\":\"" + json_escape(runtime_projection_selection.summary) + "\"";
-        if (runtime_projection_selection.inside_view <= 0)
+        if (runtime_triangle_cache.ok)
         {
-            return response_json(false,
-                                 "runtime_triangle_coordinate_projection_unavailable",
-                                 0,
-                                 1,
-                                 "no runtime triangle coordinate mode projects camera-facing samples into the viewport",
-                                 metadata + ",\"replay_blocked\":true");
+            const auto runtime_projection_selection =
+                mesh_first_select_runtime_triangle_projection_coordinates(ref,
+                                                                         ctx,
+                                                                         runtime_triangle_cache.triangles,
+                                                                         component_to_world,
+                                                                         center_ray.location,
+                                                                         camera_direction,
+                                                                         viewport);
+            metadata += ",\"runtime_triangle_projection_mode\":\"" + json_escape(runtime_projection_selection.mode) + "\"";
+            metadata += ",\"runtime_triangle_projection_samples\":" + std::to_string(runtime_projection_selection.samples);
+            metadata += ",\"runtime_triangle_projection_source_candidates\":" + std::to_string(runtime_projection_selection.source_candidates);
+            metadata += ",\"runtime_triangle_projection_project_ok\":" + std::to_string(runtime_projection_selection.project_ok);
+            metadata += ",\"runtime_triangle_projection_inside_view\":" + std::to_string(runtime_projection_selection.inside_view);
+            metadata += ",\"runtime_triangle_projection_best_score\":" + std::to_string(runtime_projection_selection.best_score);
+            metadata += ",\"runtime_triangle_projection_summary\":\"" + json_escape(runtime_projection_selection.summary) + "\"";
+        }
+        else
+        {
+            metadata += ",\"runtime_triangle_projection_mode\":\"unavailable\"";
+            metadata += ",\"runtime_triangle_projection_samples\":0";
+            metadata += ",\"runtime_triangle_projection_source_candidates\":0";
+            metadata += ",\"runtime_triangle_projection_project_ok\":0";
+            metadata += ",\"runtime_triangle_projection_inside_view\":0";
+            metadata += ",\"runtime_triangle_projection_best_score\":0";
+            metadata += ",\"runtime_triangle_projection_summary\":\"runtime triangle cache unavailable; planner uses profile_v2_skinned_pose\"";
         }
 
         MeshFirstPlanStats plan_stats{};
         std::vector<MeshFirstPlanSample> plan_samples{};
         std::string planner_failure{};
-        if (!mesh_first_generate_plan_samples_from_runtime_cache(profile,
-                                                                 runtime_triangle_cache.triangles,
-                                                                 skinned_component_positions,
-                                                                 skinned_world_positions,
-                                                                 center_ray.location,
-                                                                 camera_direction,
-                                                                 region_axis,
-                                                                 tuning_coverage_step_texels,
-                                                                 tuning_max_strokes,
-                                                                 plan_samples,
-                                                                 plan_stats,
-                                                                 planner_failure))
+        if (!mesh_first_generate_plan_samples_from_skinned_pose(profile,
+                                                                skinned_component_positions,
+                                                                skinned_world_positions,
+                                                                center_ray.location,
+                                                                camera_direction,
+                                                                region_axis,
+                                                                tuning_coverage_step_texels,
+                                                                tuning_max_strokes,
+                                                                plan_samples,
+                                                                plan_stats,
+                                                                planner_failure))
         {
             metadata += ",";
             metadata += mesh_first_plan_stats_metadata(plan_stats);
