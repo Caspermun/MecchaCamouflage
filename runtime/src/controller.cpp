@@ -1199,10 +1199,30 @@ namespace
             if (server_elapsed_ms >= 0.0)
             {
                 ui_runtime.metric_server_elapsed = format_duration_label(server_elapsed_ms);
-                ui_runtime.metric_server_eta = "0s";
+                const double sent = extract_json_number(progress, "server_strokes_sent", -1.0);
+                const double total = extract_json_number(progress, "server_strokes_total", -1.0);
+                if (sent >= total && total > 0.0)
+                    ui_runtime.metric_server_eta = "0s";
+                else if (server_elapsed_ms >= 0.0 && sent > 0.0 && total > 0.0)
+                    ui_runtime.metric_server_eta = format_duration_label(estimate_remaining_ms(server_elapsed_ms, sent, total));
+                else
+                    ui_runtime.metric_server_eta = "Calculating";
             }
-            ui_runtime.metric_apply_elapsed = "N/A";
-            ui_runtime.metric_apply_eta = "N/A";
+            const double apply_elapsed_at_write_ms = extract_json_number(progress, "local_visual_sync_elapsed_ms", -1.0);
+            const double apply_elapsed_ms = apply_elapsed_at_write_ms >= 0.0
+                                                ? apply_elapsed_at_write_ms + file_write_age_ms(progress_path)
+                                                : live_elapsed_ms;
+            if (apply_elapsed_ms >= 0.0)
+                ui_runtime.metric_apply_elapsed = format_duration_label(apply_elapsed_ms);
+            const double synced = extract_json_number(progress, "local_strokes_synced", -1.0);
+            const double total = extract_json_number(progress, "local_strokes_total",
+                                                     extract_json_number(progress, "local_sync_strokes_total", -1.0));
+            if (synced >= total && total > 0.0)
+                ui_runtime.metric_apply_eta = "0s";
+            else if (apply_elapsed_ms >= 0.0 && synced > 0.0 && total > 0.0)
+                ui_runtime.metric_apply_eta = format_duration_label(estimate_remaining_ms(apply_elapsed_ms, synced, total));
+            else
+                ui_runtime.metric_apply_eta = "Calculating";
         }
 
         if (stage == "mesh_apply_wait")

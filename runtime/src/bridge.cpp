@@ -6241,7 +6241,7 @@ namespace
         MeshFirstReplicationSnapshot replication_before{};
         int server_batch_limit{ServerPaintBatchStrokeLimit};
         int server_batch_delay_ms{ServerPaintBatchDelayMs};
-        int local_visual_sync_batch_limit{512};
+        int local_visual_sync_batch_limit{64};
         int replay_front{0};
         int replay_side{0};
         int replay_back{0};
@@ -7177,13 +7177,10 @@ namespace
         }
         job->server_next_batch_time = {};
 
-        if (job->offset >= job->strokes.size())
+        const std::size_t local_target_offset =
+            std::min<std::size_t>(job->offset, job->strokes.size());
+        if (job->local_visual_sync_failure.empty() && job->local_offset < local_target_offset)
         {
-            if (job->server_batch_elapsed_ms < 0.0)
-            {
-                job->server_batch_elapsed_ms = elapsed_ms();
-            }
-            const double server_elapsed_ms = job->server_batch_elapsed_ms;
             if (!job->local_sync_started)
             {
                 job->local_sync_started = true;
@@ -7192,21 +7189,13 @@ namespace
                 {
                     job->local_visual_sync_failure = "PaintAtUVWithBrush_unavailable";
                 }
-                write_bridge_progress("mesh_local_visual_sync",
-                                      "Syncing local visual paint",
-                                      99,
-                                      100,
-                                      server_elapsed_ms,
-                                      "\"local_sync_strokes_total\":" + std::to_string(job->strokes.size()) +
-                                          ",\"server_strokes_sent\":" + std::to_string(job->server_strokes_sent) +
-                                          ",\"server_batch_elapsed_ms\":" + std::to_string(server_elapsed_ms));
             }
 
-            if (job->local_visual_sync_failure.empty() && job->local_offset < job->strokes.size())
+            if (job->local_visual_sync_failure.empty())
             {
                 const std::size_t local_count =
                     std::min<std::size_t>(static_cast<std::size_t>(std::max(1, job->local_visual_sync_batch_limit)),
-                                          job->strokes.size() - job->local_offset);
+                                          local_target_offset - job->local_offset);
                 for (std::size_t index = 0; index < local_count; ++index)
                 {
                     std::string local_failure{};
@@ -7224,28 +7213,44 @@ namespace
                     ++job->local_offset;
                 }
 
-                const double sync_total_elapsed_ms = elapsed_ms();
-                const double sync_server_elapsed_ms =
-                    job->local_sync_started
-                        ? std::chrono::duration<double, std::milli>(job->local_sync_started_at - job->started).count()
-                        : sync_total_elapsed_ms;
+                const double total_elapsed_ms = elapsed_ms();
+                const double local_sync_elapsed_ms =
+                    std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - job->local_sync_started_at)
+                        .count();
+                const int percent = 80 + static_cast<int>((static_cast<long long>(job->server_strokes_sent) * 19LL) /
+                                                          std::max<int>(1, static_cast<int>(job->strokes.size())));
                 write_bridge_progress("mesh_local_visual_sync",
                                       "Syncing local visual paint",
-                                      99,
+                                      percent,
                                       100,
-                                      sync_total_elapsed_ms,
+                                      total_elapsed_ms,
                                       "\"local_strokes_synced\":" + std::to_string(job->local_stroke_success) +
                                           ",\"local_strokes_total\":" + std::to_string(job->strokes.size()) +
+                                          ",\"local_sync_target_strokes\":" + std::to_string(local_target_offset) +
                                           ",\"local_sync_batch_limit\":" + std::to_string(job->local_visual_sync_batch_limit) +
-                                          ",\"server_batch_elapsed_ms\":" + std::to_string(sync_server_elapsed_ms));
+                                          ",\"server_strokes_sent\":" + std::to_string(job->server_strokes_sent) +
+                                          ",\"server_strokes_total\":" + std::to_string(job->strokes.size()) +
+                                          ",\"server_batch_calls\":" + std::to_string(job->server_batch_calls) +
+                                          ",\"server_batch_limit\":" + std::to_string(job->server_batch_limit) +
+                                          ",\"server_batch_delay_ms\":" + std::to_string(job->server_batch_delay_ms) +
+                                          ",\"server_batch_elapsed_ms\":" + std::to_string(job->server_batch_elapsed_ms < 0.0 ? total_elapsed_ms : job->server_batch_elapsed_ms) +
+                                          ",\"local_visual_sync_elapsed_ms\":" + std::to_string(local_sync_elapsed_ms));
 
-                if (job->local_visual_sync_failure.empty() && job->local_offset < job->strokes.size())
+                if (job->local_visual_sync_failure.empty() && job->local_offset < local_target_offset)
                 {
-                    post_next_after(0);
+                    post_next_after(1);
                     return;
                 }
             }
+        }
 
+        if (job->offset >= job->strokes.size())
+        {
+            if (job->server_batch_elapsed_ms < 0.0)
+            {
+                job->server_batch_elapsed_ms = elapsed_ms();
+            }
+            const double server_elapsed_ms = job->server_batch_elapsed_ms;
             const double total_elapsed_ms = elapsed_ms();
             const double local_sync_elapsed_ms =
                 job->local_sync_started
@@ -7257,64 +7262,17 @@ namespace
             const std::string final_failure = !job->first_failure.empty() ? job->first_failure : job->local_visual_sync_failure;
             if (local_visual_sync_ok && final_failure.empty())
             {
-                Reflection wait_ref{};
-                std::string wait_ref_failure{};
-                if (wait_ref.init(wait_ref_failure))
-                {
-                    const auto apply_snapshot = mesh_first_capture_replication_snapshot(wait_ref, job->component);
-                    const int pending_strokes = mesh_first_pending_replication_strokes(apply_snapshot);
-                    if (pending_strokes > 0)
-                    {
-                        if (!job->apply_wait_started)
-                        {
-                            job->apply_wait_started = true;
-                            job->apply_wait_started_at = std::chrono::steady_clock::now();
-                            job->apply_initial_pending_strokes = pending_strokes;
-                        }
-                        job->apply_last_pending_strokes = pending_strokes;
-                        job->apply_zero_confirmations = 0;
-                        const double apply_elapsed_ms = std::chrono::duration<double, std::milli>(
-                                                            std::chrono::steady_clock::now() - job->apply_wait_started_at)
-                                                            .count();
-                        write_bridge_progress("mesh_apply_wait",
-                                              "Waiting for game paint apply queue",
-                                              99,
-                                              100,
-                                              total_elapsed_ms,
-                                              "\"apply_pending_strokes\":" + std::to_string(pending_strokes) +
-                                                  ",\"apply_initial_pending_strokes\":" + std::to_string(job->apply_initial_pending_strokes) +
-                                                  ",\"server_batch_elapsed_ms\":" + std::to_string(server_elapsed_ms) +
-                                                  ",\"local_visual_sync_elapsed_ms\":" + std::to_string(local_sync_elapsed_ms) +
-                                                  ",\"apply_queue_elapsed_ms\":" + std::to_string(apply_elapsed_ms));
-                        post_next_after(250);
-                        return;
-                    }
-                    if (job->apply_wait_started && pending_strokes == 0 && job->apply_zero_confirmations < 1)
-                    {
-                        ++job->apply_zero_confirmations;
-                        job->apply_last_pending_strokes = 0;
-                        const double apply_elapsed_ms = std::chrono::duration<double, std::milli>(
-                                                            std::chrono::steady_clock::now() - job->apply_wait_started_at)
-                                                            .count();
-                        write_bridge_progress("mesh_apply_wait",
-                                              "Waiting for game paint apply queue",
-                                              99,
-                                              100,
-                                              total_elapsed_ms,
-                                              "\"apply_pending_strokes\":0" +
-                                                  std::string(",\"apply_initial_pending_strokes\":") + std::to_string(job->apply_initial_pending_strokes) +
-                                                  ",\"server_batch_elapsed_ms\":" + std::to_string(server_elapsed_ms) +
-                                                  ",\"local_visual_sync_elapsed_ms\":" + std::to_string(local_sync_elapsed_ms) +
-                                                  ",\"apply_queue_elapsed_ms\":" + std::to_string(apply_elapsed_ms));
-                        post_next_after(250);
-                        return;
-                    }
-                }
+                job->apply_wait_started = false;
             }
-            const double apply_queue_elapsed_ms =
-                job->apply_wait_started
-                    ? std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - job->apply_wait_started_at).count()
-                    : 0.0;
+            const double apply_queue_elapsed_ms = 0.0;
+            int final_pending_strokes = -1;
+            Reflection pending_ref{};
+            std::string pending_ref_failure{};
+            if (pending_ref.init(pending_ref_failure))
+            {
+                const auto pending_snapshot = mesh_first_capture_replication_snapshot(pending_ref, job->component);
+                final_pending_strokes = mesh_first_pending_replication_strokes(pending_snapshot);
+            }
             std::string metadata = job->metadata;
             metadata += ",\"server_batch_calls\":" + std::to_string(job->server_batch_calls);
             metadata += ",\"server_batch_success\":" + std::to_string(job->server_batch_success);
@@ -7328,10 +7286,10 @@ namespace
             metadata += ",\"local_visual_sync_ok\":" + std::string(json_bool(local_visual_sync_ok));
             metadata += ",\"local_visual_sync_failure\":\"" + json_escape(job->local_visual_sync_failure) + "\"";
             metadata += ",\"local_visual_sync_elapsed_ms\":" + std::to_string(local_sync_elapsed_ms);
-            metadata += ",\"apply_queue_wait_used\":" + std::string(json_bool(job->apply_wait_started));
+            metadata += ",\"apply_queue_wait_used\":false";
             metadata += ",\"apply_queue_elapsed_ms\":" + std::to_string(apply_queue_elapsed_ms);
-            metadata += ",\"apply_initial_pending_strokes\":" + std::to_string(job->apply_initial_pending_strokes);
-            metadata += ",\"apply_last_pending_strokes\":" + std::to_string(job->apply_last_pending_strokes);
+            metadata += ",\"apply_initial_pending_strokes\":" + std::to_string(final_pending_strokes);
+            metadata += ",\"apply_last_pending_strokes\":" + std::to_string(final_pending_strokes);
             metadata += ",\"total_replay_elapsed_ms\":" + std::to_string(total_elapsed_ms);
             metadata += ",\"first_failure\":\"" + json_escape(final_failure) + "\"";
 
