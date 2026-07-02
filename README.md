@@ -1,8 +1,11 @@
 <p align="center">
-  <img src="assets/icon.png" alt="Meccha Camouflage icon" width="96" />
+  <img src="assets/demo2.png" alt="Meccha Camouflage demo" width="900" />
 </p>
 
-# Meccha Camouflage
+<h1>
+  <img src="assets/icon.png" alt="Meccha Camouflage icon" width="36" />
+  Meccha Camouflage
+</h1>
 
 A standalone Windows desktop tool for MECCHA CHAMELEON camouflage experiments.
 
