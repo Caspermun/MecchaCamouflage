@@ -35,6 +35,7 @@ Set-Content -Encoding ASCII -Path (Join-Path $TmpRoot "runtime-config.json") -Va
   "runtime": "cpp",
   "mode": "service",
   "game_process_name": "PenguinHotel-Win64-Shipping.exe",
+  "config_dir": "%LOCALAPPDATA%\\MecchaCamouflage\\versions\\%VERSION%",
   "log_dir": "%LOCALAPPDATA%\\MecchaCamouflage\\runtime"
 }
 '@.Replace("%VERSION%", $Version)

@@ -1,6 +1,6 @@
 NATIVE_APPLY_MODE ?= mesh_first_paint
 RESEARCH_ARTIFACTS ?= $(MECCHA_RESEARCH_ARTIFACTS)
-VERSION ?= 1.0.0
+VERSION ?= $(shell git describe --tags --exact-match 2>/dev/null || git describe --tags --dirty --always 2>/dev/null || printf dev)
 BUILD_PS := scripts/build.ps1
 RUN_PS := scripts/dev.ps1
 PACKAGE_PS := scripts/release.ps1
@@ -22,7 +22,7 @@ define RUN_POWERSHELL
 endef
 
 build:
-	$(call RUN_POWERSHELL,$(BUILD_PS),)
+	$(call RUN_POWERSHELL,$(BUILD_PS),-Version $(VERSION))
 
 run: build
 	$(call RUN_POWERSHELL,$(RUN_PS),-NativeApplyMode $(NATIVE_APPLY_MODE) $(RESEARCH_ARTIFACT_FLAGS))

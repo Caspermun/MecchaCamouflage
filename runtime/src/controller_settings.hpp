@@ -43,6 +43,7 @@ namespace meccha
 
     auto default_app_dir() -> std::filesystem::path;
     auto config_path() -> std::filesystem::path;
+    auto app_version() -> std::string;
     auto default_tuning() -> PaintTuning;
     void clamp_settings(AppSettings& settings);
     auto load_settings() -> AppSettings;

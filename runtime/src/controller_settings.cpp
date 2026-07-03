@@ -5,10 +5,15 @@
 #include "controller_settings.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
+
+#ifndef MECCHA_APP_VERSION
+#define MECCHA_APP_VERSION "dev"
+#endif
 
 namespace meccha
 {
@@ -156,6 +161,26 @@ namespace meccha
             return std::min(max_value, std::max(min_value, value));
         }
 
+        auto app_version_scope() -> std::wstring
+        {
+            std::string scope;
+            for (const unsigned char c : app_version())
+            {
+                if (std::isalnum(c) || c == '.' || c == '_' || c == '-')
+                    scope.push_back(static_cast<char>(c));
+                else
+                    scope.push_back('_');
+            }
+            if (scope.empty())
+                scope = "dev";
+            return utf8_to_wide(scope);
+        }
+
+    }
+
+    auto app_version() -> std::string
+    {
+        return MECCHA_APP_VERSION;
     }
 
     auto default_app_dir() -> std::filesystem::path
@@ -163,8 +188,8 @@ namespace meccha
         wchar_t buffer[32768]{};
         const DWORD size = GetEnvironmentVariableW(L"LOCALAPPDATA", buffer, static_cast<DWORD>(std::size(buffer)));
         if (size > 0 && size < std::size(buffer))
-            return std::filesystem::path(buffer) / L"MecchaCamouflage";
-        return std::filesystem::temp_directory_path() / L"MecchaCamouflage";
+            return std::filesystem::path(buffer) / L"MecchaCamouflage" / L"versions" / app_version_scope();
+        return std::filesystem::temp_directory_path() / L"MecchaCamouflage" / L"versions" / app_version_scope();
     }
 
     auto config_path() -> std::filesystem::path

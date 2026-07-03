@@ -890,7 +890,8 @@ namespace meccha
                 ImGui::PopFont();
             ImGui::SetCursorScreenPos(ImVec2(title_x + title_width + 8.0f,
                                              bar_pos.y + (HeaderHeight - ImGui::GetTextLineHeight()) * 0.5f));
-            ImGui::TextDisabled("v1.4.0");
+            const std::string version_label = app_version();
+            ImGui::TextDisabled("%s", version_label.c_str());
 
             const float close_width = 28.0f;
             const float minimize_width = 28.0f;

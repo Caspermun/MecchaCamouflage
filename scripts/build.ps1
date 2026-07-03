@@ -1,7 +1,8 @@
 param(
     [string]$RuntimeRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
     [string]$OutDir = "",
-    [string]$ExeName = "meccha-camouflage"
+    [string]$ExeName = "meccha-camouflage",
+    [string]$Version = "dev"
 )
 
 $ErrorActionPreference = "Stop"
@@ -105,6 +106,12 @@ function Get-ExeBaseName {
     $candidate = (New-Object System.IO.FileInfo($Name)).BaseName
     if ([string]::IsNullOrWhiteSpace($candidate)) { return "meccha-camouflage" }
     return $candidate
+}
+
+function Convert-ToCStringDefineValue {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) { $Value = "dev" }
+    return (($Value -replace '\\', '\\') -replace '"', '\"')
 }
 
 function Extract-ZipEntry {
@@ -220,6 +227,7 @@ Set-Content -Encoding ASCII -Path $ResourceRc -Value @"
 
     $ControllerToolArgs = @(
         "/nologo", "/std:c++17", "/EHsc", "/O2",
+        "/DMECCHA_APP_VERSION=`"$(Convert-ToCStringDefineValue $Version)`"",
         "/I$ImguiRoot", "/I$ImguiBackendRoot",
         $ResourceRes
     ) + $ControllerSources + $ImguiSources + @(
