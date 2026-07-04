@@ -1044,7 +1044,7 @@ namespace meccha
             {
                 const float settings_height = std::max(1.0f, ImGui::GetContentRegionAvail().y);
                 constexpr ImGuiChildFlags SettingsPanelFlags = ImGuiChildFlags_Borders;
-                constexpr ImGuiWindowFlags SettingsPanelWindowFlags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+                constexpr ImGuiWindowFlags SettingsPanelWindowFlags = 0;
                 if (begin_panel("SettingsPanel",
                                 ImVec2(0.0f, settings_height),
                                 true,
