@@ -245,7 +245,7 @@ try {
     $ControllerToolArgs = @(
         "/nologo", "/std:c++17", "/EHsc", "/O2",
         "/I$ImguiRoot", "/I$ImguiBackendRoot",
-        "/DMECCHA_APP_VERSION=\`"$Version\`"",
+        "/DMECCHA_APP_VERSION=$Version",
         $ResourceRes
     ) + $ControllerSources + $ImguiSources + @(
         "/Fo:$ObjDir\",

@@ -83,8 +83,11 @@ namespace
     using meccha::OverlayHotkeyState;
     using meccha::OverlayHotkeys;
     using meccha::PaintTuning;
+    using meccha::RegionMode;
     using meccha::RuntimeEvent;
     using meccha::RuntimeEventBuffer;
+
+    auto region_mode_to_string(RegionMode mode) -> std::string;
     using meccha::TraceLogBuffer;
 
     struct Config
@@ -2003,9 +2006,9 @@ namespace
                               "info",
                               "paint",
                               std::string("paint trigger detected: ") + trigger,
-                              std::string("{\"enable_front_paint\":") + (persisted_settings.tuning.enable_front_paint ? "true" : "false") +
-                                  ",\"enable_side_paint\":" + (persisted_settings.tuning.enable_side_paint ? "true" : "false") +
-                                  ",\"enable_back_paint\":" + (persisted_settings.tuning.enable_back_paint ? "true" : "false") +
+                              std::string("{\"enable_front_paint\":") + (persisted_settings.tuning.front_region_mode == RegionMode::Paint ? "true" : "false") +
+                                  ",\"enable_side_paint\":" + (persisted_settings.tuning.side_region_mode == RegionMode::Paint ? "true" : "false") +
+                                  ",\"enable_back_paint\":" + (persisted_settings.tuning.back_region_mode == RegionMode::Paint ? "true" : "false") +
                                   ",\"preview_only\":" + (preview_only ? "true" : "false") +
                                   ",\"unpreview_only\":" + (unpreview_only ? "true" : "false") + "}");
             trace_buffer.push("paint.start",
@@ -2022,9 +2025,9 @@ namespace
                               ",\"front_back_source_max_uv\":" + std::to_string(persisted_settings.tuning.front_back_source_max_uv) +
                               ",\"server_batch_limit\":" + std::to_string(persisted_settings.tuning.server_batch_limit) +
                               ",\"server_batch_delay_ms\":" + std::to_string(persisted_settings.tuning.server_batch_delay_ms) +
-                              ",\"enable_front_paint\":" + (persisted_settings.tuning.enable_front_paint ? "true" : "false") +
-                              ",\"enable_side_paint\":" + (persisted_settings.tuning.enable_side_paint ? "true" : "false") +
-                              ",\"enable_back_paint\":" + (persisted_settings.tuning.enable_back_paint ? "true" : "false") +
+                              ",\"enable_front_paint\":" + (persisted_settings.tuning.front_region_mode == RegionMode::Paint ? "true" : "false") +
+                              ",\"enable_side_paint\":" + (persisted_settings.tuning.side_region_mode == RegionMode::Paint ? "true" : "false") +
+                              ",\"enable_back_paint\":" + (persisted_settings.tuning.back_region_mode == RegionMode::Paint ? "true" : "false") +
                               ",\"auto_material_properties\":" + (persisted_settings.tuning.auto_material_properties ? "true" : "false") +
                               ",\"metallic\":" + std::to_string(persisted_settings.tuning.metallic) +
                               ",\"roughness\":" + std::to_string(persisted_settings.tuning.roughness) + "}");
@@ -2918,9 +2921,9 @@ namespace
                                       "info",
                                       "settings",
                                       "Paint Settings saved.",
-                                      std::string("{\"enable_front_paint\":") + (persisted_settings.tuning.enable_front_paint ? "true" : "false") +
-                                          ",\"enable_side_paint\":" + (persisted_settings.tuning.enable_side_paint ? "true" : "false") +
-                                          ",\"enable_back_paint\":" + (persisted_settings.tuning.enable_back_paint ? "true" : "false") + "}");
+                                      std::string("{\"enable_front_paint\":") + (persisted_settings.tuning.front_region_mode == RegionMode::Paint ? "true" : "false") +
+                                          ",\"enable_side_paint\":" + (persisted_settings.tuning.side_region_mode == RegionMode::Paint ? "true" : "false") +
+                                          ",\"enable_back_paint\":" + (persisted_settings.tuning.back_region_mode == RegionMode::Paint ? "true" : "false") + "}");
                 }
                 else
                 {

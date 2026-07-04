@@ -15,6 +15,10 @@
 #error "MECCHA_APP_VERSION must be defined by the build script"
 #endif
 
+#define STRINGIFY_HELPER(x) #x
+#define STRINGIFY(x) STRINGIFY_HELPER(x)
+#define MECCHA_APP_VERSION_STR STRINGIFY(MECCHA_APP_VERSION)
+
 namespace meccha
 {
     namespace
@@ -199,7 +203,7 @@ namespace meccha
 
     auto app_version() -> std::string
     {
-        return MECCHA_APP_VERSION;
+        return MECCHA_APP_VERSION_STR;
     }
 
     auto default_app_dir() -> std::filesystem::path
