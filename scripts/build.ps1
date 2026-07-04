@@ -31,8 +31,10 @@ function Resolve-ProjectVersion {
 if (-not $OutDir) {
     $OutDir = Join-Path $RuntimeRoot ".build\bin"
 }
+$OutDir = [System.IO.Path]::GetFullPath($OutDir)
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $ObjDir = Join-Path $RuntimeRoot ".build\obj"
+$ObjDir = [System.IO.Path]::GetFullPath($ObjDir)
 New-Item -ItemType Directory -Force -Path $ObjDir | Out-Null
 
 $BridgeSource = Join-Path $RuntimeRoot "runtime\src\bridge.cpp"

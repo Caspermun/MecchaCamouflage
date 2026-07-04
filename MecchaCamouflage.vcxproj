@@ -36,7 +36,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <PostBuildEvent>
-      <Command>powershell -NoProfile -ExecutionPolicy Bypass -File "$(SolutionDir)scripts\build.ps1" -OutDir "$(OutDir)" -Version "v1.5.0-native"</Command>
+      <Command>powershell -NoProfile -ExecutionPolicy Bypass -File "$(SolutionDir)scripts\build.ps1" -OutDir "$(OutDir.TrimEnd('\'))" -Version "v1.5.0-native"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
