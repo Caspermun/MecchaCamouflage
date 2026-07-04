@@ -7,16 +7,17 @@ namespace MecchaCamouflage.Controller;
 public sealed class RuntimeBridgeService
 {
     public const int BridgePort = 50262;
+    private static readonly int[] BridgePortCandidates = [BridgePort, 50263, 50264, 50265];
 
     private readonly AppPaths paths;
     private readonly RuntimeLog log;
-    private readonly BridgeClient client = new(port: BridgePort);
 
     private string bridgePath = "";
     private string injectorPath = "";
     private string progressPath = "";
     private string waitingForProcessName = "";
     private int lastInjectionProcessId;
+    private int activeBridgePort = BridgePort;
     private bool bridgeReadyTimeoutLogged;
 
     public RuntimeBridgeService(AppPaths paths, RuntimeLog log)
@@ -35,27 +36,19 @@ public sealed class RuntimeBridgeService
     }
 
     public Task<BridgeReply> PingAsync(CancellationToken cancellationToken = default) =>
-        client.PingAsync(cancellationToken);
+        Client(activeBridgePort).PingAsync(cancellationToken);
 
     public Task<BridgeReply> CancelPaintAsync(CancellationToken cancellationToken = default) =>
-        client.CancelPaintAsync(cancellationToken);
+        Client(activeBridgePort).CancelPaintAsync(cancellationToken);
 
     public Task<BridgeReply> SendPaintAsync(string payload, CancellationToken cancellationToken = default) =>
-        client.RequestAsync(payload, cancellationToken);
+        Client(activeBridgePort).RequestAsync(payload, cancellationToken);
 
     public Task<BridgeReply> ShutdownAsync(CancellationToken cancellationToken = default) =>
-        client.ShutdownAsync(cancellationToken);
+        Client(activeBridgePort).ShutdownAsync(cancellationToken);
 
     public async Task<bool> EnsureReadyAsync(string processName, CancellationToken cancellationToken = default)
     {
-        var ping = await client.PingAsync(cancellationToken);
-        if (ping.Ok && ping.Success)
-        {
-            bridgeReadyTimeoutLogged = false;
-            waitingForProcessName = "";
-            return true;
-        }
-
         var process = FindGameProcess(processName);
         if (process is null)
         {
@@ -68,42 +61,31 @@ public sealed class RuntimeBridgeService
         }
         waitingForProcessName = "";
 
-        PrepareNativeRuntime();
-        File.WriteAllText(bridgePath + ".port", BridgePort + Environment.NewLine);
-        if (lastInjectionProcessId != process.Id)
+        var occupiedPorts = new HashSet<int>();
+        foreach (var port in OrderedPortCandidates())
         {
-            log.Info($"Injecting bridge into {process.ProcessName}.exe.");
-            lastInjectionProcessId = process.Id;
-        }
-        var start = new ProcessStartInfo(injectorPath, Quote(processName) + " " + Quote(bridgePath))
-        {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardError = true,
-            RedirectStandardOutput = true
-        };
-        using var injector = Process.Start(start);
-        if (injector is null)
-            return false;
-        await injector.WaitForExitAsync(cancellationToken);
-        _ = await injector.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderr = await injector.StandardError.ReadToEndAsync(cancellationToken);
-        if (injector.ExitCode != 0)
-        {
-            log.Error($"Bridge injection failed ({injector.ExitCode}): {stderr.Trim()}");
-            return false;
+            var ping = await Client(port).PingAsync(cancellationToken);
+            if (IsBridgeReadyForProcess(ping, process.Id))
+            {
+                activeBridgePort = port;
+                bridgeReadyTimeoutLogged = false;
+                waitingForProcessName = "";
+                return true;
+            }
+            if (ping.Ok && ping.Success && ping.ProcessId is not null && ping.ProcessId != process.Id)
+                occupiedPorts.Add(port);
         }
 
-        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
-        while (DateTimeOffset.UtcNow < deadline)
+        foreach (var port in BridgePortCandidates)
         {
-            var ready = await client.PingAsync(cancellationToken);
-            if (ready.Ok && ready.Success)
+            if (occupiedPorts.Contains(port))
+                continue;
+            if (await TryInjectAndWaitAsync(processName, process, port, cancellationToken))
             {
+                activeBridgePort = port;
                 bridgeReadyTimeoutLogged = false;
                 return true;
             }
-            await Task.Delay(250, cancellationToken);
         }
         if (!bridgeReadyTimeoutLogged)
         {
@@ -113,7 +95,62 @@ public sealed class RuntimeBridgeService
         return false;
     }
 
-    private void PrepareNativeRuntime()
+    private async Task<bool> TryInjectAndWaitAsync(string processName, Process process, int port, CancellationToken cancellationToken)
+    {
+        try
+        {
+            PrepareNativeRuntime(port);
+            File.WriteAllText(bridgePath + ".port", port + Environment.NewLine);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            log.Error("Bridge runtime files could not be prepared: " + FriendlyAccessFailure(ex.Message));
+            return false;
+        }
+        if (lastInjectionProcessId != process.Id || activeBridgePort != port)
+        {
+            log.Info($"Injecting bridge into {process.ProcessName}.exe.");
+            lastInjectionProcessId = process.Id;
+        }
+        try
+        {
+            var start = new ProcessStartInfo(injectorPath, Quote(processName) + " " + Quote(bridgePath))
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true
+            };
+            using var injector = Process.Start(start);
+            if (injector is null)
+                return false;
+            await injector.WaitForExitAsync(cancellationToken);
+            _ = await injector.StandardOutput.ReadToEndAsync(cancellationToken);
+            var stderr = await injector.StandardError.ReadToEndAsync(cancellationToken);
+            if (injector.ExitCode != 0)
+            {
+                log.Error($"Bridge injection failed ({injector.ExitCode}): {FriendlyInjectorFailure(injector.ExitCode, stderr)}");
+                return false;
+            }
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or System.ComponentModel.Win32Exception)
+        {
+            log.Error("Bridge injector could not run: " + FriendlyAccessFailure(ex.Message));
+            return false;
+        }
+
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            var ready = await Client(port).PingAsync(cancellationToken);
+            if (IsBridgeReadyForProcess(ready, process.Id))
+                return true;
+            await Task.Delay(250, cancellationToken);
+        }
+        return false;
+    }
+
+    private void PrepareNativeRuntime(int port)
     {
         paths.EnsureBaseDirectories();
         var appDir = PackagedAssets.ResolveAssetRoot(paths, "native");
@@ -130,13 +167,13 @@ public sealed class RuntimeBridgeService
         var runtimeDir = paths.RuntimeHashDirectory(packagedBridge, packagedInjector);
         Directory.CreateDirectory(runtimeDir);
         injectorPath = Path.Combine(runtimeDir, "runtime-injector.exe");
-        File.Copy(packagedInjector, injectorPath, true);
+        CopyIfMissing(packagedInjector, injectorPath);
 
         var hash = ShortHash(packagedBridge);
-        bridgePath = Path.Combine(runtimeDir, $"runtime-bridge-{hash}-{BridgePort}.dll");
-        File.Copy(packagedBridge, bridgePath, true);
+        bridgePath = Path.Combine(runtimeDir, $"runtime-bridge-{hash}-{port}.dll");
+        CopyIfMissing(packagedBridge, bridgePath);
         Directory.CreateDirectory(paths.ProgressDirectory);
-        progressPath = Path.Combine(paths.ProgressDirectory, $"bridge-{hash}-{BridgePort}.progress.json");
+        progressPath = Path.Combine(paths.ProgressDirectory, $"bridge-{hash}-{port}.progress.json");
         File.WriteAllText(bridgePath + ".progress.path", progressPath + Environment.NewLine);
 
         var profileRoot = PackagedAssets.ResolveAssetRoot(paths, "mesh-profiles");
@@ -149,6 +186,54 @@ public sealed class RuntimeBridgeService
                 File.Copy(file, Path.Combine(targetProfiles, Path.GetFileName(file)), true);
         }
         paths.CleanupRuntimeBinDirectories(runtimeDir, TimeSpan.FromDays(14), keepNewest: 3);
+    }
+
+    private IEnumerable<int> OrderedPortCandidates()
+    {
+        yield return activeBridgePort;
+        foreach (var port in BridgePortCandidates)
+        {
+            if (port != activeBridgePort)
+                yield return port;
+        }
+    }
+
+    private static bool IsBridgeReadyForProcess(BridgeReply reply, int processId) =>
+        reply.Ok &&
+        reply.Success &&
+        (reply.ProcessId is null || reply.ProcessId == processId);
+
+    private static BridgeClient Client(int port) => new(port: port);
+
+    private static string FriendlyInjectorFailure(int exitCode, string stderr)
+    {
+        var message = stderr.Trim();
+        var lower = message.ToLowerInvariant();
+        if (exitCode is 2 or 5 ||
+            lower.Contains("access is denied") ||
+            lower.Contains("access denied") ||
+            lower.Contains("win32=5"))
+        {
+            return "access denied while opening or injecting into the game process. Run Meccha Camouflage with the same privileges as the game, or try Run as administrator.";
+        }
+        if (string.IsNullOrWhiteSpace(message))
+            return "injector exited without an error message.";
+        return message;
+    }
+
+    private static string FriendlyAccessFailure(string message)
+    {
+        var lower = message.ToLowerInvariant();
+        if (lower.Contains("access") || lower.Contains("permission") || lower.Contains("denied"))
+            return message + " Run Meccha Camouflage with access to its runtime folder.";
+        return message;
+    }
+
+    private static void CopyIfMissing(string source, string target)
+    {
+        if (File.Exists(target))
+            return;
+        File.Copy(source, target, false);
     }
 
     private static string ShortHash(string path)

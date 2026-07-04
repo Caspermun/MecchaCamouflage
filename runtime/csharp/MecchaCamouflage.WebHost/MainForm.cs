@@ -49,6 +49,7 @@ public sealed class MainForm : Form
 
         Shown += async (_, _) =>
         {
+            StartBridgeWarmup();
             await InitializeWebViewAsync();
         };
         FormClosing += (_, _) =>
@@ -59,7 +60,11 @@ public sealed class MainForm : Form
         };
         ResizeEnd += (_, _) => PersistWindowSnapshot();
         Move += (_, _) => PersistWindowSnapshot();
-        statusTimer.Tick += async (_, _) => await PushSnapshotAsync();
+        statusTimer.Tick += async (_, _) =>
+        {
+            StartBridgeWarmup();
+            await PushSnapshotAsync();
+        };
         statusTimer.Start();
     }
 
@@ -111,6 +116,21 @@ public sealed class MainForm : Form
         webView.CoreWebView2.Navigate("https://meccha.localhost/index.html");
         webReady = true;
         await PushSnapshotAsync();
+        StartBridgeWarmup();
+    }
+
+    private void StartBridgeWarmup()
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await session.WarmupBridgeAsync();
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        });
     }
 
     private static void HandleNavigationStarting(CoreWebView2NavigationStartingEventArgs args)

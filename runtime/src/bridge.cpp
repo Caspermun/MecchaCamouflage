@@ -36,7 +36,6 @@
 namespace
 {
     constexpr int DefaultBridgePort = 47654;
-    constexpr int IdleShutdownSeconds = 15;
     constexpr std::size_t MaxRequestBytes = 8 * 1024 * 1024;
     constexpr int ProcessEventVtableIndex = 0x4C;
     constexpr UINT PaintDispatchMessage = WM_APP + 0x4D43;
@@ -457,6 +456,8 @@ namespace
                  "paint_elapsed_ms",
                  "paint_eta_ms",
                  "first_failure",
+                 "pid",
+                 "port",
                  "cancel_reason",
                  "research_artifacts_requested",
              })
@@ -13310,7 +13311,13 @@ namespace
     {
         if (line.find("\"type\":\"ping\"") != std::string::npos)
         {
-            return response_json(true, "ping", 0, 0, "pong");
+            return response_json(true,
+                                 "ping",
+                                 0,
+                                 0,
+                                 "pong",
+                                 "\"pid\":" + std::to_string(GetCurrentProcessId()) +
+                                     ",\"port\":" + std::to_string(resolve_bridge_port()));
         }
         if (line.find("\"type\":\"capabilities\"") != std::string::npos)
         {
@@ -13434,7 +13441,6 @@ namespace
             WSACleanup();
             return;
         }
-        auto last_activity = std::chrono::steady_clock::now();
         while (g_running.load())
         {
             fd_set read_set{};
@@ -13450,11 +13456,6 @@ namespace
             }
             if (selected == 0)
             {
-                const auto idle_seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - last_activity).count();
-                if (!g_process_event_hook_installed.load() && idle_seconds >= IdleShutdownSeconds)
-                {
-                    break;
-                }
                 continue;
             }
             SOCKET client = accept(listener, nullptr, nullptr);
@@ -13462,7 +13463,6 @@ namespace
             {
                 continue;
             }
-            last_activity = std::chrono::steady_clock::now();
             g_active_client_handlers.fetch_add(1);
             std::thread(handle_bridge_client, client).detach();
         }

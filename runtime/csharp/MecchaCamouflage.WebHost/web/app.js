@@ -137,10 +137,14 @@ function renderLogs(logs) {
 }
 
 function setLogHtml(value) {
-  byId("logs").innerHTML = String(value)
+  const logs = byId("logs");
+  logs.innerHTML = String(value)
     .split(/\r?\n/)
     .map(line => `<span class="${logLineClass(line)}">${escapeHtml(line)}</span>`)
     .join("\n");
+  requestAnimationFrame(() => {
+    logs.scrollTop = logs.scrollHeight;
+  });
 }
 
 function logLineClass(line) {

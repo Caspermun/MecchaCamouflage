@@ -48,17 +48,66 @@ public sealed class HostSession
     public RuntimeBridgeService Runtime { get; }
     public AppSettings Settings { get; private set; }
     public bool PaintRunning { get; private set; }
+    private readonly SemaphoreSlim bridgeWarmupGate = new(1, 1);
+    private DateTimeOffset nextBridgeWarmupAttempt;
 
     public async Task<UiSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
     {
         var process = Runtime.FindGameProcess(Settings.GameProcessName);
         var ping = await Runtime.PingAsync(cancellationToken);
         var progress = ReadProgressSnapshot(Runtime.ProgressPath);
+        var bridgeReady = process is not null &&
+            ping.Ok &&
+            ping.Success &&
+            (ping.ProcessId is null || ping.ProcessId == process.Id);
         return CreateSnapshot(
             process is null ? "waiting" : "attached",
-            ping.Ok && ping.Success ? "ready" : "waiting",
-            ping.Ok && ping.Success ? "ready" : "stopped",
+            bridgeReady ? "ready" : "waiting",
+            bridgeReady ? "ready" : "stopped",
             progress);
+    }
+
+    public async Task WarmupBridgeAsync(CancellationToken cancellationToken = default)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (now < nextBridgeWarmupAttempt)
+            return;
+        if (!await bridgeWarmupGate.WaitAsync(0, cancellationToken))
+            return;
+        try
+        {
+            var process = Runtime.FindGameProcess(Settings.GameProcessName);
+            var ping = await Runtime.PingAsync(cancellationToken);
+            if (ping.Ok &&
+                ping.Success &&
+                (process is null || ping.ProcessId is null || ping.ProcessId == process.Id))
+            {
+                nextBridgeWarmupAttempt = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(2);
+                return;
+            }
+            if (process is null)
+            {
+                nextBridgeWarmupAttempt = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(2);
+                return;
+            }
+            var ready = await Runtime.EnsureReadyAsync(Settings.GameProcessName, cancellationToken);
+            nextBridgeWarmupAttempt = ready
+                ? DateTimeOffset.UtcNow + TimeSpan.FromSeconds(2)
+                : DateTimeOffset.UtcNow + TimeSpan.FromSeconds(10);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("Bridge warmup failed: " + ex.Message);
+            nextBridgeWarmupAttempt = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(10);
+        }
+        finally
+        {
+            bridgeWarmupGate.Release();
+        }
     }
 
     public HostCommandResult UpdateSetting(string key, JsonElement value)
