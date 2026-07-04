@@ -989,10 +989,38 @@ namespace meccha
                           ImGui::GetColorU32(Hairline),
                           1.0f);
 
-            if (ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f))
+            static bool s_dragging = false;
+            static POINT s_drag_start_mouse_pos{};
+            static RECT s_drag_start_window_pos{};
+
+            HWND hwnd = static_cast<HWND>(ImGui::GetWindowViewport()->PlatformHandle);
+            if (hwnd)
             {
-                ReleaseCapture();
-                SendMessageW(GetActiveWindow(), WM_NCLBUTTONDOWN, HTCAPTION, 0);
+                if (ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                {
+                    s_dragging = true;
+                    GetCursorPos(&s_drag_start_mouse_pos);
+                    GetWindowRect(hwnd, &s_drag_start_window_pos);
+                }
+
+                if (s_dragging)
+                {
+                    if (ImGui::IsMouseDown(ImGuiMouseButton_Left))
+                    {
+                        POINT current_mouse_pos{};
+                        GetCursorPos(&current_mouse_pos);
+                        const int dx = current_mouse_pos.x - s_drag_start_mouse_pos.x;
+                        const int dy = current_mouse_pos.y - s_drag_start_mouse_pos.y;
+                        SetWindowPos(hwnd, nullptr,
+                                     s_drag_start_window_pos.left + dx,
+                                     s_drag_start_window_pos.top + dy,
+                                     0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                    }
+                    else
+                    {
+                        s_dragging = false;
+                    }
+                }
             }
         }
         ImGui::EndChild();
