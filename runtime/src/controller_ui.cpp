@@ -993,7 +993,7 @@ namespace meccha
             static POINT s_drag_start_mouse_pos{};
             static RECT s_drag_start_window_pos{};
 
-            HWND hwnd = static_cast<HWND>(ImGui::GetWindowViewport()->PlatformHandle);
+            HWND hwnd = static_cast<HWND>(ImGui::GetMainViewport()->PlatformHandle);
             if (hwnd)
             {
                 if (ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
