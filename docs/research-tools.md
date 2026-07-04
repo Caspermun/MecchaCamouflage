@@ -4,14 +4,15 @@ This project pins OSS game-research tools as git submodules under
 `third_party/`. They are used only when a game update requires asset, mapping,
 or SDK investigation.
 
-The runtime build only requires `third_party/imgui` and the reviewed mesh
-profile artifact under `assets/mesh-profiles/`. The tools below are for update
-recovery and profile regeneration, not normal app builds.
+The normal runtime build requires the WPF controller, the native bridge and
+injector, and the reviewed mesh profile artifacts under `assets/mesh-profiles/`.
+The tools below are for update recovery and profile regeneration, not normal
+app builds.
 
-v1.4.0 uses the mesh-first paint route. The required game-derived mesh profiles
-are tracked under `assets/mesh-profiles/`; `make build` embeds the required
-profile into `meccha-camouflage.exe` and also copies it into the local build
-output for package/debug runs. After game updates, initialize the research-tool
+v1.5.0 uses the mesh-first paint route. The required game-derived mesh profiles
+are tracked under `assets/mesh-profiles/`; `make build` copies the required
+profile assets into the local build output for package/debug runs. After game
+updates, initialize the research-tool
 submodules and run `make mesh MAPPINGS=<path-to-usmap>` to regenerate the
 reviewed shipping profile.
 
@@ -83,8 +84,8 @@ When a game update breaks painting, use this order:
 4. Generate a current `.usmap` locally if the previous mapping no longer works.
 5. Run `make mesh MAPPINGS=<path-to-current.usmap>` to regenerate the profile.
 6. Review and commit regenerated shipping profiles in `assets/mesh-profiles/`.
-   `scripts/build.ps1` embeds the required profile into the executable and also
-   copies profiles into `.build/bin/mesh-profiles/` for package/debug runs.
+   `scripts/build.ps1` copies profiles into `.build/bin/mesh-profiles/` for
+   package/debug runs.
 
 Commit only reviewed project artifacts:
 

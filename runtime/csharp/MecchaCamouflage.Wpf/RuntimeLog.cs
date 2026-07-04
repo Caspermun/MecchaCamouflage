@@ -6,6 +6,7 @@ public sealed class RuntimeLog
 {
     private readonly AppPaths paths;
     private readonly List<string> lines = [];
+    private string lastEntryKey = "";
 
     public RuntimeLog(AppPaths paths)
     {
@@ -21,6 +22,11 @@ public sealed class RuntimeLog
 
     private void Write(string level, string message)
     {
+        var entryKey = level + "\0" + message;
+        if (entryKey == lastEntryKey)
+            return;
+        lastEntryKey = entryKey;
+
         var line = $"{DateTime.Now:HH:mm:ss} [{level}] {message}";
         lines.Add(line);
         while (lines.Count > 400)

@@ -286,7 +286,6 @@ public partial class MainWindow : Window
             var ready = await runtime.EnsureReadyAsync(settings.GameProcessName);
             if (!ready)
             {
-                log.Warn("Bridge not ready.");
                 return;
             }
             var process = runtime.FindGameProcess(settings.GameProcessName);

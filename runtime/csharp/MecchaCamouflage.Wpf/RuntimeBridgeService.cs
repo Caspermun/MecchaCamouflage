@@ -15,6 +15,9 @@ public sealed class RuntimeBridgeService
     private string bridgePath = "";
     private string injectorPath = "";
     private string progressPath = "";
+    private string waitingForProcessName = "";
+    private int lastInjectionProcessId;
+    private bool bridgeReadyTimeoutLogged;
 
     public RuntimeBridgeService(AppPaths paths, RuntimeLog log)
     {
@@ -44,18 +47,31 @@ public sealed class RuntimeBridgeService
     {
         var ping = await client.PingAsync(cancellationToken);
         if (ping.Ok && ping.Success)
+        {
+            bridgeReadyTimeoutLogged = false;
+            waitingForProcessName = "";
             return true;
+        }
 
         var process = FindGameProcess(processName);
         if (process is null)
         {
-            log.Warn($"Waiting for process {processName}.");
+            if (!string.Equals(waitingForProcessName, processName, StringComparison.OrdinalIgnoreCase))
+            {
+                log.Warn($"Waiting for process {processName}.");
+                waitingForProcessName = processName;
+            }
             return false;
         }
+        waitingForProcessName = "";
 
         PrepareNativeRuntime();
         File.WriteAllText(bridgePath + ".port", BridgePort + Environment.NewLine);
-        log.Info($"Injecting bridge into {process.ProcessName}.exe.");
+        if (lastInjectionProcessId != process.Id)
+        {
+            log.Info($"Injecting bridge into {process.ProcessName}.exe.");
+            lastInjectionProcessId = process.Id;
+        }
         var start = new ProcessStartInfo(injectorPath, Quote(processName) + " " + Quote(bridgePath))
         {
             UseShellExecute = false,
@@ -67,25 +83,30 @@ public sealed class RuntimeBridgeService
         if (injector is null)
             return false;
         await injector.WaitForExitAsync(cancellationToken);
-        var stdout = await injector.StandardOutput.ReadToEndAsync(cancellationToken);
+        _ = await injector.StandardOutput.ReadToEndAsync(cancellationToken);
         var stderr = await injector.StandardError.ReadToEndAsync(cancellationToken);
         if (injector.ExitCode != 0)
         {
             log.Error($"Bridge injection failed ({injector.ExitCode}): {stderr.Trim()}");
             return false;
         }
-        if (!string.IsNullOrWhiteSpace(stdout))
-            log.Info(stdout.Trim());
 
         var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
         while (DateTimeOffset.UtcNow < deadline)
         {
             var ready = await client.PingAsync(cancellationToken);
             if (ready.Ok && ready.Success)
+            {
+                bridgeReadyTimeoutLogged = false;
                 return true;
+            }
             await Task.Delay(250, cancellationToken);
         }
-        log.Warn("Bridge did not become ready after injection.");
+        if (!bridgeReadyTimeoutLogged)
+        {
+            log.Warn("Bridge did not become ready after injection.");
+            bridgeReadyTimeoutLogged = true;
+        }
         return false;
     }
 

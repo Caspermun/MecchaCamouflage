@@ -39,6 +39,7 @@
 /.vs/
 /.vscode/
 /.idea/
+/.devspace/
 *.suo
 *.user
 *.userosscache

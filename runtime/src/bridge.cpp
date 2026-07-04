@@ -359,6 +359,136 @@ namespace
         return out;
     }
 
+    auto metadata_contains_bool(const std::string& metadata, const char* key, bool value) -> bool
+    {
+        return metadata.find(std::string("\"") + key + "\":" + (value ? "true" : "false")) != std::string::npos;
+    }
+
+    auto metadata_contains_string(const std::string& metadata, const char* key, const char* value) -> bool
+    {
+        return metadata.find(std::string("\"") + key + "\":\"" + value + "\"") != std::string::npos;
+    }
+
+    auto append_metadata_field(std::string& out, const std::string& metadata, const char* key) -> void
+    {
+        const std::string pattern = std::string("\"") + key + "\":";
+        const auto begin = metadata.find(pattern);
+        if (begin == std::string::npos)
+        {
+            return;
+        }
+
+        std::size_t pos = begin + pattern.size();
+        bool in_string = false;
+        bool escaped = false;
+        int depth = 0;
+        for (; pos < metadata.size(); ++pos)
+        {
+            const char c = metadata[pos];
+            if (escaped)
+            {
+                escaped = false;
+                continue;
+            }
+            if (in_string && c == '\\')
+            {
+                escaped = true;
+                continue;
+            }
+            if (c == '"')
+            {
+                in_string = !in_string;
+                continue;
+            }
+            if (in_string)
+            {
+                continue;
+            }
+            if (c == '{' || c == '[')
+            {
+                ++depth;
+                continue;
+            }
+            if (c == '}' || c == ']')
+            {
+                --depth;
+                continue;
+            }
+            if (c == ',' && depth == 0)
+            {
+                break;
+            }
+        }
+
+        if (!out.empty())
+        {
+            out += ",";
+        }
+        out += pattern;
+        out += metadata.substr(begin + pattern.size(), pos - (begin + pattern.size()));
+    }
+
+    auto compact_mesh_response_metadata(const std::string& metadata) -> std::string
+    {
+        if (!metadata_contains_string(metadata, "route", "mesh_first_paint") ||
+            metadata_contains_bool(metadata, "research_artifacts_requested", true))
+        {
+            return metadata;
+        }
+
+        std::string out;
+        for (const char* key : {
+                 "route",
+                 "mesh_first_pipeline",
+                 "preview_only",
+                 "unpreview_only",
+                 "front_region_mode",
+                 "side_region_mode",
+                 "back_region_mode",
+                 "paint_region_count",
+                 "fill_region_count",
+                 "skip_region_count",
+                 "server_batch_limit",
+                 "server_batch_delay_ms",
+                 "total_strokes",
+                 "server_batch_calls",
+                 "server_batch_failures",
+                 "server_strokes_sent",
+                 "paint_elapsed_ms",
+                 "paint_eta_ms",
+                 "first_failure",
+                 "cancel_reason",
+                 "research_artifacts_requested",
+             })
+        {
+            append_metadata_field(out, metadata, key);
+        }
+        return out.empty() ? metadata : out;
+    }
+
+    auto compact_mesh_progress_metadata(const std::string& metadata) -> std::string
+    {
+        std::string out;
+        for (const char* key : {
+                 "progress_schema_version",
+                 "phase",
+                 "terminal",
+                 "result",
+                 "paint_elapsed_ms",
+                 "paint_eta_ms",
+                 "cancel_requested",
+                 "cancel_reason",
+                 "failure_stage",
+                 "first_failure",
+                 "remaining_strokes",
+                 "cancel_phase",
+             })
+        {
+            append_metadata_field(out, metadata, key);
+        }
+        return out.empty() ? metadata : out;
+    }
+
     auto response_json(bool success,
                        const char* stage,
                        int applied,
@@ -380,7 +510,7 @@ namespace
         if (!metadata.empty())
         {
             out += ",";
-            out += metadata;
+            out += compact_mesh_response_metadata(metadata);
         }
         out += "}}\n";
         return out;
@@ -8059,7 +8189,9 @@ namespace
             out += ",";
             out += extra;
         }
-        return out;
+        return metadata_contains_bool(job ? job->metadata : std::string{}, "research_artifacts_requested", true)
+                   ? out
+                   : compact_mesh_progress_metadata(out);
     }
 
     auto mesh_first_remaining_strokes(const std::shared_ptr<MeshFirstServerBatchAsyncJob>& job) -> int
