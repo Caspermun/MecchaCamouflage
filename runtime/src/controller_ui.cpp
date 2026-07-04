@@ -849,7 +849,7 @@ namespace meccha
         auto region_checkboxes = [&](bool& front, bool& side, bool& back, bool enabled, bool& changed) {
             set_form_x();
             ImGui::AlignTextToFramePadding();
-            ImGui::TextDisabled("%s", "Regions");
+            ImGui::TextDisabled("%s", "Regions (meshes)");
             ImGui::SameLine(form_control_x());
             if (custom_checkbox("Front", front, enabled))
                 changed = true;
