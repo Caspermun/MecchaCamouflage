@@ -60,7 +60,8 @@ if ([string]::IsNullOrWhiteSpace($Cue4ParsePath)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-    $OutputPath = Join-Path $RepoRoot "assets\mesh-profiles\paintman.mesh-profile-v2.json"
+    $SafeExportName = if ([string]::IsNullOrWhiteSpace($ExportName)) { "mesh" } else { $ExportName -replace '[^A-Za-z0-9_.-]', '_' }
+    $OutputPath = Join-Path $RepoRoot "assets\mesh-profiles\$SafeExportName.mesh-profile-v2.json"
 }
 
 $PaksPath = Require-Path $PaksPath "MECCHA CHAMELEON Paks directory"

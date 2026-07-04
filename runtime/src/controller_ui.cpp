@@ -684,10 +684,10 @@ namespace meccha
 
         constexpr float FormPaddingX = 14.0f;
         constexpr float FormRightPaddingX = 14.0f;
-        constexpr float FormLabelWidth = 132.0f;
-        constexpr float AppLabelWidth = 106.0f;
-        constexpr float FormControlMaxWidth = 310.0f;
-        constexpr float AppControlMaxWidth = 300.0f;
+        constexpr float FormLabelWidth = 154.0f;
+        constexpr float AppLabelWidth = 124.0f;
+        constexpr float FormControlMaxWidth = 320.0f;
+        constexpr float AppControlMaxWidth = 320.0f;
         auto set_form_x = [&]() {
             ImGui::SetCursorPosX(FormPaddingX);
         };
@@ -969,7 +969,7 @@ namespace meccha
         const float gutter = 14.0f;
         const float available_left_width = std::max(1.0f, total_width - gutter);
         const float left_width = std::min(available_left_width,
-                                          std::max(430.0f, std::min(460.0f, available_left_width * 0.40f)));
+                                          std::max(470.0f, std::min(500.0f, available_left_width * 0.42f)));
         if (ImGui::BeginChild("MainContent", ImVec2(total_width, content_height), false))
         {
             if (ImGui::BeginChild("ControlsColumn", ImVec2(left_width, 0.0f), false))
@@ -1031,17 +1031,6 @@ namespace meccha
                                        hotkey_input_width);
 
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1.0f);
-                    app_row("Stop Hotkey");
-                    if (runtime.recording_stop_hotkey)
-                        app_frame_button("StopHotkeyRecordButton", "Press key...", runtime.app_editing, ImVec2(record_width, 0.0f));
-                    else if (app_frame_button("StopHotkeyRecordButton", "Record", runtime.app_editing, ImVec2(record_width, 0.0f)))
-                        actions.stop_hotkey_recording = true;
-                    ImGui::SameLine();
-                    readonly_input_box("StopHotkeyReadonly",
-                                       (runtime.app_editing ? draft.stop_hotkey : persisted.stop_hotkey).c_str(),
-                                       hotkey_input_width);
-
-                    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1.0f);
                     app_row("Preview Hotkey");
                     if (runtime.recording_preview_hotkey)
                         app_frame_button("PreviewHotkeyRecordButton", "Press key...", runtime.app_editing, ImVec2(record_width, 0.0f));
@@ -1064,7 +1053,19 @@ namespace meccha
                                        hotkey_input_width);
 
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1.0f);
-                    app_row("Always on top");
+                    app_row("Stop Hotkey");
+                    if (runtime.recording_stop_hotkey)
+                        app_frame_button("StopHotkeyRecordButton", "Press key...", runtime.app_editing, ImVec2(record_width, 0.0f));
+                    else if (app_frame_button("StopHotkeyRecordButton", "Record", runtime.app_editing, ImVec2(record_width, 0.0f)))
+                        actions.stop_hotkey_recording = true;
+                    ImGui::SameLine();
+                    readonly_input_box("StopHotkeyReadonly",
+                                       (runtime.app_editing ? draft.stop_hotkey : persisted.stop_hotkey).c_str(),
+                                       hotkey_input_width);
+
+                    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1.0f);
+                    const float always_on_top_row_top = app_row("Always on top");
+                    ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, always_on_top_row_top + 4.0f));
                     if (checkbox_box("AlwaysOnTop", always_on_top, runtime.app_editing))
                         app_value_changed = true;
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1.0f);
@@ -1178,9 +1179,9 @@ namespace meccha
                         ImGui::TableSetColumnIndex(0);
                         metric_card("PROCESS", runtime.game_attached ? "ATTACHED" : "WAITING", status_color(runtime.game_attached ? "attached" : "waiting"));
                         ImGui::TableSetColumnIndex(1);
-                        metric_card("HOOK", runtime.bridge_ready ? "READY" : "WAITING", status_color(runtime.bridge_ready ? "ready" : "waiting"));
+                        metric_card("BRIDGE", runtime.bridge_ready ? "READY" : "WAITING", status_color(runtime.bridge_ready ? "ready" : "waiting"));
                         ImGui::TableSetColumnIndex(2);
-                        metric_card("CONTROL", runtime.service_state.empty() ? "-" : runtime.service_state, status_color(runtime.service_state));
+                        metric_card("SERVICE", runtime.service_state.empty() ? "-" : runtime.service_state, status_color(runtime.service_state));
                         ImGui::TableSetColumnIndex(3);
                         metric_card("PAINT", runtime.paint_ready ? "READY" : (runtime.paint_running ? "RUNNING" : "WAITING"), status_color(runtime.paint_ready ? "ready" : (runtime.paint_running ? "running" : "waiting")));
                         ImGui::EndTable();

@@ -1212,19 +1212,17 @@ namespace
             const bool server_running = phase == "server_batch" && !terminal;
             ui_runtime.metric_server_elapsed = format_duration_label(server_elapsed_ms + (server_running ? age_ms : 0.0));
         }
-        if (server_eta_ms >= 0.0)
+        if (!terminal && server_eta_ms >= 0.0)
             ui_runtime.metric_server_eta = format_duration_label(std::max(0.0, server_eta_ms - age_ms));
-        else if (phase == "local_sync" || terminal)
-            ui_runtime.metric_server_eta = "0s";
         else
-            ui_runtime.metric_server_eta = "Calculating";
+            ui_runtime.metric_server_eta = "-";
 
         if (paint_elapsed_ms >= 0.0)
             ui_runtime.metric_apply_elapsed = format_duration_label(paint_elapsed_ms + (!terminal ? age_ms : 0.0));
-        if (paint_eta_ms >= 0.0)
+        if (!terminal && paint_eta_ms >= 0.0)
             ui_runtime.metric_apply_eta = format_duration_label(std::max(0.0, paint_eta_ms - age_ms));
         else
-            ui_runtime.metric_apply_eta = terminal ? "0s" : "Calculating";
+            ui_runtime.metric_apply_eta = "-";
     }
 
     auto latest_mesh_ui_summary(const std::vector<meccha::RuntimeEvent>& events) -> MeshUiSummary
@@ -1267,23 +1265,25 @@ namespace
                                                                  extract_json_number(details, "total_replay_elapsed_ms", elapsed));
             const auto server_eta = extract_json_number(details, "server_eta_ms", -1.0);
             const auto paint_eta = extract_json_number(details, "paint_eta_ms", -1.0);
+            const bool terminal_progress = extract_json_bool(details, "terminal", false);
             const bool final_replay_metrics = server_elapsed_done >= 0.0 || paint_elapsed_done >= 0.0 ||
                                              it->event == "paint_done" || stage == "mesh_paint_done" ||
                                              stage == "mesh_first_paint_done" ||
                                              stage == "mesh_paint_cancelled" ||
-                                             stage == "mesh_paint_failed";
+                                             stage == "mesh_paint_failed" ||
+                                             terminal_progress;
             if (server_elapsed_done >= 0.0 && summary.server_elapsed.empty())
                 summary.server_elapsed = format_duration_label(server_elapsed_done);
             if (paint_elapsed_done >= 0.0 && summary.apply_elapsed.empty())
                 summary.apply_elapsed = format_duration_label(paint_elapsed_done);
-            if (server_eta >= 0.0 && summary.server_eta.empty())
+            if (!final_replay_metrics && server_eta >= 0.0 && summary.server_eta.empty())
                 summary.server_eta = format_duration_label(server_eta);
-            if (paint_eta >= 0.0 && summary.apply_eta.empty())
+            if (!final_replay_metrics && paint_eta >= 0.0 && summary.apply_eta.empty())
                 summary.apply_eta = format_duration_label(paint_eta);
             if (final_replay_metrics && summary.server_eta.empty())
-                summary.server_eta = "0s";
+                summary.server_eta = "-";
             if (final_replay_metrics && summary.apply_eta.empty())
-                summary.apply_eta = "0s";
+                summary.apply_eta = "-";
             if (unsafe >= 0.0)
                 summary.unsafe = std::to_string(static_cast<long long>(unsafe));
             if (enabled >= 0.0)
@@ -1344,7 +1344,7 @@ namespace
     {
         if (milliseconds < 0.0)
             return "-";
-        if (milliseconds > 0.0 && milliseconds < 1000.0)
+        if (milliseconds < 1000.0)
             return "<1s";
         const long long total_seconds = static_cast<long long>((milliseconds + 500.0) / 1000.0);
         const long long minutes = total_seconds / 60;
@@ -1562,6 +1562,9 @@ namespace
                        ",\"front_back_source_max_uv\":" + std::to_string(config.tuning.front_back_source_max_uv) +
                        ",\"server_batch_limit\":" + std::to_string(config.tuning.server_batch_limit) +
                        ",\"server_batch_delay_ms\":" + std::to_string(config.tuning.server_batch_delay_ms) +
+                       ",\"enable_front_paint\":" + (config.tuning.enable_front_paint ? "true" : "false") +
+                       ",\"enable_side_paint\":" + (config.tuning.enable_side_paint ? "true" : "false") +
+                       ",\"enable_back_paint\":" + (config.tuning.enable_back_paint ? "true" : "false") +
                        ",\"auto_material_properties\":" + (config.tuning.auto_material_properties ? "true" : "false") +
                        ",\"metallic\":" + std::to_string(config.tuning.metallic) +
                        ",\"roughness\":" + std::to_string(config.tuning.roughness) + "}";
@@ -1607,10 +1610,10 @@ namespace
             diagnostics.event("bridge_unavailable_same_pid",
                               "warning",
                               "bridge",
-                              "Bridge unavailable for the injected process; retrying readiness check.",
+                              "Bridge unavailable for the injected process; forcing reinjection.",
                               std::string("{\"process\":") + process_json(process, config.game_process_name) +
                                   ",\"bridge_port\":" + std::to_string(config.bridge_port) + "}");
-            return false;
+            injected_pid = 0;
         }
         diagnostics.event("inject_started", "info", "inject", "attempting native bridge injection",
                           std::string("{\"process\":") + process_json(process, config.game_process_name) +
@@ -1623,8 +1626,13 @@ namespace
                           ",\"bridge_port\":" + std::to_string(config.bridge_port) + "}");
         if (!ok)
             return false;
+        if (!wait_for_bridge_ready(config, bridge_path, diagnostics, 5.0))
+        {
+            injected_pid = 0;
+            return false;
+        }
         injected_pid = process.pid;
-        return wait_for_bridge_ready(config, bridge_path, diagnostics, 5.0);
+        return true;
     }
 
     auto truncate_for_trace(const std::string& text, std::size_t limit = 1200) -> std::string
@@ -1908,10 +1916,10 @@ namespace
         bool applied_topmost = settings.always_on_top;
         OverlayServiceState service{};
         OverlayHotkeyState hotkey_state{};
-        OverlayHotkeys hotkeys{meccha::parse_hotkey_binding(settings.start_hotkey, VK_F10),
-                               meccha::parse_hotkey_binding(settings.stop_hotkey, VK_F9),
-                               meccha::parse_hotkey_binding(settings.preview_hotkey, VK_F8),
-                               meccha::parse_hotkey_binding(settings.unpreview_hotkey, VK_F7)};
+        OverlayHotkeys hotkeys{meccha::parse_hotkey_binding(settings.start_hotkey, VK_F1),
+                               meccha::parse_hotkey_binding(settings.stop_hotkey, VK_F4),
+                               meccha::parse_hotkey_binding(settings.preview_hotkey, VK_F2),
+                               meccha::parse_hotkey_binding(settings.unpreview_hotkey, VK_F3)};
         diagnostics.set_hotkey(std::string("{\"start\":") + json_string(meccha::hotkey_to_string(hotkeys.start_binding())) +
                                ",\"stop\":" + json_string(meccha::hotkey_to_string(hotkeys.stop_binding())) +
                                ",\"preview\":" + json_string(meccha::hotkey_to_string(hotkeys.preview_binding())) +
@@ -1960,7 +1968,15 @@ namespace
             config.tuning = persisted_settings.tuning;
             config.preview_only = preview_only;
             config.unpreview_only = unpreview_only;
-            diagnostics.event("paint_triggered", "info", "paint", std::string("paint trigger detected: ") + trigger);
+            diagnostics.event("paint_triggered",
+                              "info",
+                              "paint",
+                              std::string("paint trigger detected: ") + trigger,
+                              std::string("{\"enable_front_paint\":") + (persisted_settings.tuning.enable_front_paint ? "true" : "false") +
+                                  ",\"enable_side_paint\":" + (persisted_settings.tuning.enable_side_paint ? "true" : "false") +
+                                  ",\"enable_back_paint\":" + (persisted_settings.tuning.enable_back_paint ? "true" : "false") +
+                                  ",\"preview_only\":" + (preview_only ? "true" : "false") +
+                                  ",\"unpreview_only\":" + (unpreview_only ? "true" : "false") + "}");
             trace_buffer.push("paint.start",
                               "",
                               std::string("{\"trigger\":") + json_string(trigger) +
@@ -1975,6 +1991,9 @@ namespace
                               ",\"front_back_source_max_uv\":" + std::to_string(persisted_settings.tuning.front_back_source_max_uv) +
                               ",\"server_batch_limit\":" + std::to_string(persisted_settings.tuning.server_batch_limit) +
                               ",\"server_batch_delay_ms\":" + std::to_string(persisted_settings.tuning.server_batch_delay_ms) +
+                              ",\"enable_front_paint\":" + (persisted_settings.tuning.enable_front_paint ? "true" : "false") +
+                              ",\"enable_side_paint\":" + (persisted_settings.tuning.enable_side_paint ? "true" : "false") +
+                              ",\"enable_back_paint\":" + (persisted_settings.tuning.enable_back_paint ? "true" : "false") +
                               ",\"auto_material_properties\":" + (persisted_settings.tuning.auto_material_properties ? "true" : "false") +
                               ",\"metallic\":" + std::to_string(persisted_settings.tuning.metallic) +
                               ",\"roughness\":" + std::to_string(persisted_settings.tuning.roughness) + "}");
@@ -2553,9 +2572,11 @@ namespace
             {
                 const double running_elapsed = std::max(0.0, (seconds_now() - service.paint_started_at) * 1000.0);
                 if (metric_blank(ui_runtime.metric_server_eta))
-                    ui_runtime.metric_server_eta = "Calculating";
+                    ui_runtime.metric_server_eta = "-";
                 if (metric_blank(ui_runtime.metric_server_elapsed))
                     ui_runtime.metric_server_elapsed = format_duration_label(running_elapsed);
+                if (metric_blank(ui_runtime.metric_apply_elapsed))
+                    ui_runtime.metric_apply_elapsed = format_duration_label(running_elapsed);
                 apply_live_progress_metrics(ui_runtime, bridge_progress_file(bridge_path));
             }
             if (service.state == ControllerServiceState::Stopped)
@@ -2788,10 +2809,10 @@ namespace
                 const HotkeyBinding previous_preview_hotkey = hotkeys.preview_binding();
                 const HotkeyBinding previous_unpreview_hotkey = hotkeys.unpreview_binding();
                 std::string register_error;
-                const bool hotkey_registered = hotkeys.set_hotkeys(meccha::parse_hotkey_binding(next.start_hotkey, VK_F10),
-                                                                   meccha::parse_hotkey_binding(next.stop_hotkey, VK_F9),
-                                                                   meccha::parse_hotkey_binding(next.preview_hotkey, VK_F8),
-                                                                   meccha::parse_hotkey_binding(next.unpreview_hotkey, VK_F7),
+                const bool hotkey_registered = hotkeys.set_hotkeys(meccha::parse_hotkey_binding(next.start_hotkey, VK_F1),
+                                                                   meccha::parse_hotkey_binding(next.stop_hotkey, VK_F4),
+                                                                   meccha::parse_hotkey_binding(next.preview_hotkey, VK_F2),
+                                                                   meccha::parse_hotkey_binding(next.unpreview_hotkey, VK_F3),
                                                                    &register_error);
                 if (!hotkey_registered)
                 {
@@ -2862,7 +2883,13 @@ namespace
                     paint_editing = false;
                     trace_buffer.push("config", "save", std::string("{\"path\":") + json_string(wide_to_utf8(meccha::config_path().wstring())) +
                                                      ",\"scope\":\"paint\"}");
-                    diagnostics.event("paint_settings_saved", "info", "settings", "Paint Settings saved.");
+                    diagnostics.event("paint_settings_saved",
+                                      "info",
+                                      "settings",
+                                      "Paint Settings saved.",
+                                      std::string("{\"enable_front_paint\":") + (persisted_settings.tuning.enable_front_paint ? "true" : "false") +
+                                          ",\"enable_side_paint\":" + (persisted_settings.tuning.enable_side_paint ? "true" : "false") +
+                                          ",\"enable_back_paint\":" + (persisted_settings.tuning.enable_back_paint ? "true" : "false") + "}");
                 }
                 else
                 {

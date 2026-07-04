@@ -10,7 +10,7 @@ namespace meccha
 {
     struct HotkeyBinding
     {
-        UINT vk{VK_F10};
+        UINT vk{VK_F1};
         UINT modifiers{0};
     };
 
@@ -22,7 +22,7 @@ namespace meccha
         bool unpreview_requested{false};
     };
 
-    auto parse_hotkey_binding(const std::string& text, UINT default_vk = VK_F10) -> HotkeyBinding;
+    auto parse_hotkey_binding(const std::string& text, UINT default_vk = VK_F1) -> HotkeyBinding;
     auto hotkey_to_string(const HotkeyBinding& binding) -> std::string;
     auto hotkey_backend_json(const HotkeyBinding& start,
                              bool start_registered,
@@ -62,9 +62,9 @@ namespace meccha
         void unregister_unpreview();
 
         HotkeyBinding start_{};
-        HotkeyBinding stop_{VK_F9, 0};
-        HotkeyBinding preview_{VK_F8, 0};
-        HotkeyBinding unpreview_{VK_F7, 0};
+        HotkeyBinding stop_{VK_F4, 0};
+        HotkeyBinding preview_{VK_F2, 0};
+        HotkeyBinding unpreview_{VK_F3, 0};
         bool start_registered_{false};
         bool stop_registered_{false};
         bool preview_registered_{false};

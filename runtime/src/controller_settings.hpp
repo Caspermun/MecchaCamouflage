@@ -25,7 +25,7 @@ namespace meccha
 
     struct AppSettings
     {
-        int layout_version{22};
+        int layout_version{23};
         float panel_x{-1.0f};
         float panel_y{-1.0f};
         float panel_width{1040.0f};
@@ -34,10 +34,10 @@ namespace meccha
         std::wstring game_process_name{DefaultGameProcessName};
         bool always_on_top{true};
         float opacity{1.0f};
-        std::string start_hotkey{"F10"};
-        std::string stop_hotkey{"F9"};
-        std::string preview_hotkey{"F8"};
-        std::string unpreview_hotkey{"F7"};
+        std::string start_hotkey{"F1"};
+        std::string preview_hotkey{"F2"};
+        std::string unpreview_hotkey{"F3"};
+        std::string stop_hotkey{"F4"};
         PaintTuning tuning{};
         bool show_info{true};
         bool show_warning{true};

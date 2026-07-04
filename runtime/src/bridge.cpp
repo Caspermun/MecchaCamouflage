@@ -4106,7 +4106,7 @@ namespace
         int vertex_count{0};
         int index_count{0};
         int bone_count{0};
-        bool expected_export{false};
+        bool has_identity{false};
         bool has_vertices{false};
         bool has_indices{false};
         std::vector<int> indices{};
@@ -4366,8 +4366,7 @@ namespace
         profile.vertex_count = json_int_field(text, "VertexCount", 0, 0, 10'000'000);
         profile.index_count = json_int_field(text, "IndexCount", 0, 0, 30'000'000);
         profile.bone_count = count_occurrences(text, "\"ParentIndex\"");
-        profile.expected_export = json_key_window_contains(text, "Export", "paintman") ||
-                                  contains_text(lower_copy(profile.profile_id + " " + profile.source_path + " " + profile.export_name), "paintman");
+        profile.has_identity = !profile.source_path.empty() && !profile.export_name.empty();
         profile.has_vertices = text.find("\"Vertices\"") != std::string::npos;
         profile.has_indices = text.find("\"Indices\"") != std::string::npos;
 
@@ -4377,16 +4376,16 @@ namespace
             profile.message = "mesh profile must use ProfileSchemaVersion 2";
             return profile;
         }
-        if (!profile.expected_export)
+        if (!profile.has_identity)
         {
-            profile.stage = "mesh_profile_identity_mismatch";
-            profile.message = "mesh profile export is not paintman";
+            profile.stage = "mesh_profile_invalid";
+            profile.message = "mesh profile is missing SourcePath or Export identity";
             return profile;
         }
-        if (profile.vertex_count != 1660 || profile.index_count != 8352 || profile.bone_count != 28)
+        if (profile.vertex_count <= 0 || profile.index_count <= 0 || profile.index_count % 3 != 0 || profile.bone_count <= 0)
         {
-            profile.stage = "mesh_profile_shape_mismatch";
-            profile.message = "mesh profile shape does not match expected paintman LOD0";
+            profile.stage = "mesh_profile_shape_invalid";
+            profile.message = "mesh profile has invalid vertex, index, or bone counts";
             return profile;
         }
         if (!profile.has_vertices || !profile.has_indices)
@@ -4568,7 +4567,8 @@ namespace
                ",\"mesh_profile_vertex_count\":" + std::to_string(profile.vertex_count) +
                ",\"mesh_profile_index_count\":" + std::to_string(profile.index_count) +
                ",\"mesh_profile_bone_count\":" + std::to_string(profile.bone_count) +
-               ",\"mesh_profile_expected_export\":" + json_bool(profile.expected_export) +
+               ",\"mesh_profile_has_identity\":" + json_bool(profile.has_identity) +
+               ",\"mesh_profile_expected_export\":" + json_bool(profile.has_identity) +
                ",\"mesh_profile_has_vertices\":" + json_bool(profile.has_vertices) +
                ",\"mesh_profile_has_indices\":" + json_bool(profile.has_indices) +
                ",\"mesh_profile_has_triangle_metadata\":" + json_bool(!profile.triangles.empty());
@@ -7875,9 +7875,9 @@ namespace
     auto paint_mesh_first_on_game_thread(const std::string& request,
                                          const std::shared_ptr<QueuedPaintJob>& queued_job) -> std::string
     {
-        constexpr bool enable_front = true;
-        constexpr bool enable_side = true;
-        constexpr bool enable_back = true;
+        const bool enable_front = json_bool_field(request, "enable_front_paint", true);
+        const bool enable_side = json_bool_field(request, "enable_side_paint", true);
+        const bool enable_back = json_bool_field(request, "enable_back_paint", true);
         const bool preview_only = json_bool_field(request, "preview_only", false);
         const bool unpreview_only = json_bool_field(request, "unpreview_only", false);
         const bool research_artifacts = json_bool_field(request, "research_artifacts", false);
@@ -8082,7 +8082,7 @@ namespace
                                  "mesh_profile_runtime_identity_mismatch",
                                  0,
                                  1,
-                                 "no live mesh candidate matched the paintman mesh profile",
+                                 "no live mesh candidate matched a required mesh profile",
                                  metadata);
         }
         metadata += ",\"selected_mesh\":\"" + hex_address(selected_mesh.mesh) + "\"";
@@ -8907,9 +8907,26 @@ namespace
 
         MeshFirstChannelBytes albedo_before_bytes{};
         MeshFirstChannelChecksum albedo_before{};
+        MeshFirstPreviewSnapshot existing_preview_snapshot{};
+        bool preview_snapshot_reused = false;
+        bool preview_snapshot_component_mismatch = false;
         if (preview_only)
         {
-            albedo_before_bytes = mesh_first_export_channel_bytes(ref, ctx.component, sdk::EPaintChannel::Albedo);
+            existing_preview_snapshot = mesh_first_preview_snapshot_copy();
+            if (existing_preview_snapshot.available && !existing_preview_snapshot.albedo_bytes.empty() &&
+                existing_preview_snapshot.component == ctx.component)
+            {
+                albedo_before_bytes.ok = true;
+                albedo_before_bytes.bytes = existing_preview_snapshot.albedo_bytes;
+                albedo_before_bytes.failure = "ok";
+                preview_snapshot_reused = true;
+            }
+            else
+            {
+                preview_snapshot_component_mismatch =
+                    existing_preview_snapshot.available && existing_preview_snapshot.component != ctx.component;
+                albedo_before_bytes = mesh_first_export_channel_bytes(ref, ctx.component, sdk::EPaintChannel::Albedo);
+            }
         }
         if (preview_only && albedo_before_bytes.ok)
         {
@@ -8925,6 +8942,11 @@ namespace
         metadata += ",\"albedo_export_before_ok\":" + std::string(json_bool(albedo_before.ok));
         metadata += ",\"albedo_export_before_bytes\":" + std::to_string(albedo_before.bytes);
         metadata += ",\"albedo_export_before_hash\":\"" + std::to_string(albedo_before.hash) + "\"";
+        metadata += ",\"preview_snapshot_available_before\":" + std::string(json_bool(existing_preview_snapshot.available));
+        metadata += ",\"preview_snapshot_reused\":" + std::string(json_bool(preview_snapshot_reused));
+        metadata += ",\"preview_snapshot_component_mismatch_before\":" + std::string(json_bool(preview_snapshot_component_mismatch));
+        metadata += ",\"albedo_before_source\":\"" +
+                    std::string(preview_snapshot_reused ? "preview_snapshot" : (preview_only ? "export_channel" : "skipped")) + "\"";
         if (!albedo_before.ok)
         {
             metadata += ",\"albedo_export_before_failure\":\"" + json_escape(albedo_before.failure) + "\"";

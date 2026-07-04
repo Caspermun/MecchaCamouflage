@@ -216,13 +216,13 @@ namespace meccha
         settings.tuning.server_batch_limit = 1;
         settings.tuning.server_batch_delay_ms = std::max(1, std::min(1000, settings.tuning.server_batch_delay_ms));
         if (settings.start_hotkey.empty())
-            settings.start_hotkey = "F10";
+            settings.start_hotkey = "F1";
         if (settings.stop_hotkey.empty())
-            settings.stop_hotkey = "F9";
+            settings.stop_hotkey = "F4";
         if (settings.preview_hotkey.empty())
-            settings.preview_hotkey = "F8";
+            settings.preview_hotkey = "F2";
         if (settings.unpreview_hotkey.empty())
-            settings.unpreview_hotkey = "F7";
+            settings.unpreview_hotkey = "F3";
     }
 
     auto load_settings() -> AppSettings
@@ -255,6 +255,17 @@ namespace meccha
             settings.preview_hotkey = hotkey;
         if (const auto hotkey = extract_json_string(text, "unpreview_hotkey"); !hotkey.empty())
             settings.unpreview_hotkey = hotkey;
+        if (layout_version < 23)
+        {
+            if (settings.start_hotkey == "F10")
+                settings.start_hotkey = "F1";
+            if (settings.preview_hotkey == "F8")
+                settings.preview_hotkey = "F2";
+            if (settings.unpreview_hotkey == "F7")
+                settings.unpreview_hotkey = "F3";
+            if (settings.stop_hotkey == "F9")
+                settings.stop_hotkey = "F4";
+        }
         settings.tuning.stroke_size_texels = extract_json_number(text, "stroke_size_texels", settings.tuning.stroke_size_texels);
         settings.tuning.coverage_step_texels = extract_json_number(text, "coverage_step_texels", settings.tuning.coverage_step_texels);
         settings.tuning.side_source_max_uv = extract_json_number(text, "side_source_max_uv", settings.tuning.side_source_max_uv);

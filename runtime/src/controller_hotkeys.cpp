@@ -145,7 +145,7 @@ namespace meccha
     auto parse_hotkey_binding(const std::string& text, UINT default_vk) -> HotkeyBinding
     {
         HotkeyBinding binding{};
-        binding.vk = is_function_vk(default_vk) ? default_vk : VK_F10;
+        binding.vk = is_function_vk(default_vk) ? default_vk : VK_F1;
         binding.modifiers = 0;
         for (const auto& raw : split_tokens(text.empty() ? vk_label(binding.vk) : text))
         {
@@ -157,7 +157,7 @@ namespace meccha
             else binding.vk = vk_from_label(token, binding.vk);
         }
         if (!is_function_vk(binding.vk))
-            binding.vk = is_function_vk(default_vk) ? default_vk : VK_F10;
+            binding.vk = is_function_vk(default_vk) ? default_vk : VK_F1;
         binding.modifiers = 0;
         return binding;
     }
