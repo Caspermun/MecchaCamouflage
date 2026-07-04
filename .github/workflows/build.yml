@@ -1,0 +1,21 @@
+name: Build Native Exe
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Compile Native C++ Project
+        run: |
+          msbuild /p:Configuration=Release MecchaCamouflage.sln
+
+      - name: Upload Finished Exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: meccha-v1.5.0-native
+          path: x64/Release/*.exe
