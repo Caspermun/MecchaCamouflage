@@ -1654,7 +1654,8 @@ namespace
                        ",\"fill_color_g\":" + std::to_string(config.tuning.fill_color_g) +
                        ",\"fill_color_b\":" + std::to_string(config.tuning.fill_color_b) +
                        ",\"fill_metallic\":" + std::to_string(config.tuning.fill_metallic) +
-                       ",\"fill_roughness\":" + std::to_string(config.tuning.fill_roughness) + "}";
+                       ",\"fill_roughness\":" + std::to_string(config.tuning.fill_roughness) +
+                       ",\"allow_unsafe_paint\":" + (config.tuning.allow_unsafe_paint ? "true" : "false") + "}";
         payload += "}";
         return payload;
     }

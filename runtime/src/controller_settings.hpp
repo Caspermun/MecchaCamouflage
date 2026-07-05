@@ -33,6 +33,7 @@ namespace meccha
         double fill_color_b{1.0};
         double fill_metallic{1.0};
         double fill_roughness{0.0};
+        bool allow_unsafe_paint{false};
     };
 
     struct AppSettings

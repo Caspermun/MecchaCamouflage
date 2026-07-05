@@ -9776,6 +9776,7 @@ namespace
         const double fill_metallic = clamp_range(json_number_field(request, "fill_metallic", 1.0), 0.0, 1.0);
         const double fill_roughness = clamp_range(json_number_field(request, "fill_roughness", 0.0), 0.0, 1.0);
         const bool tuning_adaptive_batch_enabled = json_bool_field(request, "adaptive_batch_enabled", true);
+        const bool tuning_allow_unsafe_paint = json_bool_field(request, "allow_unsafe_paint", false);
         const int tuning_server_batch_limit = json_int_field(request, "server_batch_limit", ServerPaintBatchStrokeLimit, 1, ServerPaintBatchStrokeLimitMax);
         const int tuning_server_batch_delay_ms = json_int_field(request, "server_batch_delay_ms", ServerPaintBatchDelayMs, 150, 500);
         const std::string requested_server_batch_rpc = json_string_field(request, "server_batch_rpc", "");
@@ -10532,7 +10533,7 @@ namespace
         metadata += ",\"source_distance_side_max_component\":" + std::to_string(clamp_range(tuning_side_source_max_uv * 500.0, 20.0, 80.0));
         metadata += ",\"source_projection_color_available\":" + std::string(json_bool(capture.capture_pixels_available));
         metadata += ",\"source_samples\":" + std::to_string(capture.samples.size());
-        if (plan_stats.unsafe_enabled > 0)
+        if (plan_stats.unsafe_enabled > 0 && !tuning_allow_unsafe_paint)
         {
             return response_json(false,
                                  "planner_blocked",

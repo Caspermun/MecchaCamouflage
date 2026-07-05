@@ -323,6 +323,7 @@ namespace meccha
         settings.tuning.fill_color_b = extract_json_number(text, "fill_color_b", settings.tuning.fill_color_b);
         settings.tuning.fill_metallic = extract_json_number(text, "fill_metallic", settings.tuning.fill_metallic);
         settings.tuning.fill_roughness = extract_json_number(text, "fill_roughness", settings.tuning.fill_roughness);
+        settings.tuning.allow_unsafe_paint = extract_json_bool(text, "allow_unsafe_paint", settings.tuning.allow_unsafe_paint);
         settings.bridge_port = static_cast<int>(extract_json_number(text, "bridge_port", settings.bridge_port));
 
         clamp_settings(settings);
@@ -363,6 +364,7 @@ namespace meccha
             "  \"fill_color_b\": " + std::to_string(settings.tuning.fill_color_b) + ",\n" +
             "  \"fill_metallic\": " + std::to_string(settings.tuning.fill_metallic) + ",\n" +
             "  \"fill_roughness\": " + std::to_string(settings.tuning.fill_roughness) + ",\n" +
+            "  \"allow_unsafe_paint\": " + std::string(settings.tuning.allow_unsafe_paint ? "true" : "false") + ",\n" +
             "  \"bridge_port\": " + std::to_string(settings.bridge_port) + "\n" +
             "}\n";
         const auto path = config_path();
