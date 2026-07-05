@@ -160,7 +160,7 @@ namespace meccha
             if (lower.find("ready") != std::string::npos ||
                 lower.find("attached") != std::string::npos ||
                 lower.find("running") != std::string::npos)
-                return ImVec4(0.463f, 0.725f, 0.0f, 1.0f);
+                return ImVec4(0.58f, 0.20f, 0.85f, 1.0f);
             if (lower.find("failed") != std::string::npos ||
                 lower.find("error") != std::string::npos)
                 return ImVec4(0.96f, 0.28f, 0.25f, 1.0f);
@@ -173,7 +173,7 @@ namespace meccha
                 return ImGui::GetColorU32(ImVec4(0.96f, 0.28f, 0.25f, 1.0f));
             if (line.find("[WARN]") != std::string::npos)
                 return ImGui::GetColorU32(ImVec4(0.95f, 0.72f, 0.31f, 1.0f));
-            return ImGui::GetColorU32(ImVec4(0.18f, 0.56f, 1.0f, 1.0f));
+            return ImGui::GetColorU32(ImVec4(0.82f, 0.82f, 0.85f, 1.0f));
         }
 
         auto stable_id(const char* prefix, const char* label) -> std::string
@@ -451,20 +451,20 @@ namespace meccha
         colors[ImGuiCol_ChildBg] = ImVec4(0.075f, 0.075f, 0.075f, 1.0f);
         colors[ImGuiCol_Border] = ImVec4(0.37f, 0.37f, 0.37f, 1.0f);
         colors[ImGuiCol_FrameBg] = ImVec4(0.035f, 0.035f, 0.035f, 1.0f);
-        colors[ImGuiCol_FrameBgHovered] = ImVec4(0.090f, 0.100f, 0.080f, 1.0f);
-        colors[ImGuiCol_FrameBgActive] = ImVec4(0.115f, 0.140f, 0.090f, 1.0f);
+        colors[ImGuiCol_FrameBgHovered] = ImVec4(0.10f, 0.05f, 0.16f, 1.0f);
+        colors[ImGuiCol_FrameBgActive] = ImVec4(0.14f, 0.06f, 0.22f, 1.0f);
         colors[ImGuiCol_Button] = ImVec4(0.075f, 0.075f, 0.075f, 1.0f);
-        colors[ImGuiCol_ButtonHovered] = ImVec4(0.150f, 0.190f, 0.095f, 1.0f);
-        colors[ImGuiCol_ButtonActive] = ImVec4(0.463f, 0.725f, 0.0f, 1.0f);
+        colors[ImGuiCol_ButtonHovered] = ImVec4(0.18f, 0.08f, 0.28f, 1.0f);
+        colors[ImGuiCol_ButtonActive] = ImVec4(0.58f, 0.20f, 0.85f, 1.0f);
         colors[ImGuiCol_Header] = ImVec4(0.075f, 0.075f, 0.075f, 1.0f);
-        colors[ImGuiCol_HeaderHovered] = ImVec4(0.150f, 0.190f, 0.095f, 1.0f);
-        colors[ImGuiCol_HeaderActive] = ImVec4(0.463f, 0.725f, 0.0f, 1.0f);
-        colors[ImGuiCol_CheckMark] = ImVec4(0.463f, 0.725f, 0.0f, 1.0f);
-        colors[ImGuiCol_SliderGrab] = ImVec4(0.463f, 0.725f, 0.0f, 1.0f);
-        colors[ImGuiCol_SliderGrabActive] = ImVec4(0.58f, 0.86f, 0.12f, 1.0f);
+        colors[ImGuiCol_HeaderHovered] = ImVec4(0.18f, 0.08f, 0.28f, 1.0f);
+        colors[ImGuiCol_HeaderActive] = ImVec4(0.58f, 0.20f, 0.85f, 1.0f);
+        colors[ImGuiCol_CheckMark] = ImVec4(0.58f, 0.20f, 0.85f, 1.0f);
+        colors[ImGuiCol_SliderGrab] = ImVec4(0.58f, 0.20f, 0.85f, 1.0f);
+        colors[ImGuiCol_SliderGrabActive] = ImVec4(0.72f, 0.35f, 0.95f, 1.0f);
         colors[ImGuiCol_Separator] = ImVec4(0.34f, 0.34f, 0.34f, 1.0f);
-        colors[ImGuiCol_SeparatorHovered] = ImVec4(0.463f, 0.725f, 0.0f, 1.0f);
-        colors[ImGuiCol_SeparatorActive] = ImVec4(0.58f, 0.86f, 0.12f, 1.0f);
+        colors[ImGuiCol_SeparatorHovered] = ImVec4(0.58f, 0.20f, 0.85f, 1.0f);
+        colors[ImGuiCol_SeparatorActive] = ImVec4(0.72f, 0.35f, 0.95f, 1.0f);
         colors[ImGuiCol_ScrollbarBg] = ImVec4(0.020f, 0.020f, 0.022f, 1.0f);
         colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.170f, 0.175f, 0.185f, 1.0f);
         colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.250f, 0.260f, 0.275f, 1.0f);
@@ -547,8 +547,8 @@ namespace meccha
         ImGui::PopStyleVar();
 
         const ImGuiStyle& style = ImGui::GetStyle();
-        constexpr ImVec4 Primary = ImVec4(0.463f, 0.725f, 0.0f, 1.0f);
-        constexpr ImVec4 PrimaryText = ImVec4(0.02f, 0.02f, 0.02f, 1.0f);
+        constexpr ImVec4 Primary = ImVec4(0.58f, 0.20f, 0.85f, 1.0f);
+        constexpr ImVec4 PrimaryText = ImVec4(0.96f, 0.94f, 0.98f, 1.0f);
         constexpr ImVec4 Surface = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
         constexpr ImVec4 SurfaceLow = ImVec4(0.105f, 0.105f, 0.105f, 1.0f);
         constexpr ImVec4 Hairline = ImVec4(0.37f, 0.37f, 0.37f, 1.0f);
@@ -628,8 +628,8 @@ namespace meccha
             else if (primary)
             {
                 ImGui::PushStyleColor(ImGuiCol_Button, Primary);
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.58f, 0.86f, 0.12f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.64f, 0.92f, 0.18f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.68f, 0.30f, 0.92f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.75f, 0.40f, 0.98f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_Text, PrimaryText);
             }
             ImGui::BeginDisabled(!enabled);
