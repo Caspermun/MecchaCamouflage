@@ -2816,6 +2816,7 @@ namespace
         std::uintptr_t relay_component{0};
         std::uintptr_t server_paint_batch_function{0};
         std::uintptr_t server_compact_paint_batch_function{0};
+        std::uintptr_t send_custom_stroke_batch_function{0};
         std::uintptr_t local_paint_at_uv_function{0};
     };
 
@@ -3493,6 +3494,7 @@ namespace
         }
         ctx.server_paint_batch_function = ref.find_function(ctx.component, "ServerPaintBatch");
         ctx.server_compact_paint_batch_function = ref.find_function(ctx.component, "ServerCompactPaintBatch");
+        ctx.send_custom_stroke_batch_function = ref.find_function(ctx.component, "SendCustomStrokeBatchToServer");
         ctx.local_paint_at_uv_function = ref.find_function(ctx.component, "PaintAtUVWithBrush");
         ctx.ok = true;
         ctx.stage = "sdk_ready";
@@ -10206,12 +10208,21 @@ namespace
         const bool compact_batch_compatible = sdk_strokes_are_compact_compatible(strokes);
         const bool compact_batch_replication_enabled =
             read_object_u8_property(ref, ctx.component, "bUseCompactPaintReplication", 0) != 0;
+        const bool send_custom_batch_available = ctx.send_custom_stroke_batch_function != 0;
+        const bool use_send_custom_server_batch = !preview_only && send_custom_batch_available;
         const bool use_compact_server_batch =
-            !preview_only && compact_batch_available && compact_batch_compatible && compact_batch_replication_enabled;
-        metadata += ",\"server_batch_rpc\":\"" + std::string(use_compact_server_batch ? "ServerCompactPaintBatch" : "none") + "\"";
+            !preview_only && !use_send_custom_server_batch && compact_batch_available &&
+            compact_batch_compatible && compact_batch_replication_enabled;
+        metadata += ",\"server_batch_rpc\":\"" +
+                    std::string(use_send_custom_server_batch
+                                    ? "SendCustomStrokeBatchToServer"
+                                    : (use_compact_server_batch ? "ServerCompactPaintBatch" : "none")) + "\"";
         metadata += ",\"server_paint_batch_used\":" + std::string(json_bool(!preview_only));
         metadata += ",\"server_paint_batch_single_stroke_mode\":" +
                     std::string(json_bool(!preview_only && tuning_server_batch_limit <= 1));
+        metadata += ",\"server_send_custom_stroke_batch_available\":" + std::string(json_bool(send_custom_batch_available));
+        metadata += ",\"server_send_custom_stroke_batch_used\":" + std::string(json_bool(use_send_custom_server_batch));
+        metadata += ",\"server_send_custom_stroke_batch_function\":\"" + hex_address(ctx.send_custom_stroke_batch_function) + "\"";
         metadata += ",\"server_compact_paint_batch_available\":" + std::string(json_bool(compact_batch_available));
         metadata += ",\"server_compact_paint_batch_compatible\":" + std::string(json_bool(compact_batch_compatible));
         metadata += ",\"server_compact_paint_replication_enabled\":" + std::string(json_bool(compact_batch_replication_enabled));
@@ -10219,7 +10230,7 @@ namespace
         metadata += ",\"server_compact_paint_batch_ignored\":" + std::string(json_bool(!use_compact_server_batch));
         metadata += ",\"server_packed_paint_batch_used\":false";
         metadata += ",\"server_packed_paint_batch_ignored\":\"packed_format_unverified\"";
-        if (!preview_only && !compact_batch_available)
+        if (!preview_only && !use_send_custom_server_batch && !compact_batch_available)
         {
             return response_json(false,
                                  "mesh_server_compact_batch_unavailable",
@@ -10228,7 +10239,7 @@ namespace
                                  "ServerCompactPaintBatch is unavailable; paint cannot replay through the compact route",
                                  metadata + ",\"replay_blocked\":true");
         }
-        if (!preview_only && !compact_batch_compatible)
+        if (!preview_only && !use_send_custom_server_batch && !compact_batch_compatible)
         {
             return response_json(false,
                                  "mesh_server_compact_batch_incompatible",
@@ -10237,7 +10248,7 @@ namespace
                                  "ServerCompactPaintBatch requires skeletal triangle anchors for every stroke",
                                  metadata + ",\"replay_blocked\":true");
         }
-        if (!preview_only && !compact_batch_replication_enabled)
+        if (!preview_only && !use_send_custom_server_batch && !compact_batch_replication_enabled)
         {
             return response_json(false,
                                  "mesh_server_compact_replication_disabled",
@@ -10276,7 +10287,10 @@ namespace
             metadata += ",\"local_visual_sync_after_each_server_stroke\":true";
             metadata += ",\"local_visual_sync_lockstep_with_server_batch\":true";
             metadata += ",\"local_texture_import_required\":false";
-            metadata += ",\"authoritative_replay\":\"compact_server_replay_with_local_lockstep\"";
+            metadata += ",\"authoritative_replay\":\"" +
+                        std::string(use_send_custom_server_batch
+                                        ? "send_custom_multicast_replay_with_local_lockstep"
+                                        : "compact_server_replay_with_local_lockstep") + "\"";
             if (!ctx.local_paint_at_uv_function)
             {
                 return response_json(false,
@@ -10324,6 +10338,7 @@ namespace
             "ServerCompactPaint",
             "ServerCompactPaintBatch",
             "ServerPackedPaintBatch",
+            "SendCustomStrokeBatchToServer",
             "MulticastCompactPaint",
             "MulticastCompactPaintBatch",
             "MulticastCompactPaintBatchToOthers",
@@ -10507,7 +10522,8 @@ namespace
             async_job->queued = queued_job;
             async_job->component = ctx.component;
             async_job->relay_component = ctx.relay_component;
-            async_job->server_paint_batch_function = ctx.server_paint_batch_function;
+            async_job->server_paint_batch_function =
+                use_send_custom_server_batch ? ctx.send_custom_stroke_batch_function : ctx.server_paint_batch_function;
             async_job->server_compact_paint_batch_function = ctx.server_compact_paint_batch_function;
             async_job->local_paint_at_uv_function = ctx.local_paint_at_uv_function;
             async_job->replication_manager = replication_manager;
@@ -10522,8 +10538,9 @@ namespace
                                                            ? ref.find_function(replication_manager, "GetReplicationPressure")
                                                            : 0;
             async_job->server_compact_paint_batch_available = ctx.server_compact_paint_batch_function != 0;
-            async_job->server_compact_paint_batch_enabled = true;
-            async_job->server_batch_rpc = "ServerCompactPaintBatch";
+            async_job->server_compact_paint_batch_enabled = use_compact_server_batch;
+            async_job->server_batch_rpc =
+                use_send_custom_server_batch ? "SendCustomStrokeBatchToServer" : "ServerCompactPaintBatch";
             async_job->local_visual_sync_enabled = true;
             async_job->strokes = std::move(strokes);
             async_job->metadata = metadata + ",\"server_batch_schedule\":\"timer_drained\"";
