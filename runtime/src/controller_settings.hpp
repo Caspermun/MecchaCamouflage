@@ -24,7 +24,7 @@ namespace meccha
         RegionMode side_region_mode{RegionMode::Paint};
         RegionMode back_region_mode{RegionMode::Paint};
         int server_batch_limit{50};
-        int server_batch_delay_ms{100};
+        int server_batch_delay_ms{150};
         bool auto_material_properties{false};
         double metallic{0.0};
         double roughness{1.0};

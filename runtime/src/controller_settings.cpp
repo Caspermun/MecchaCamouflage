@@ -236,8 +236,8 @@ namespace meccha
         settings.tuning.front_back_source_max_uv = clamp_double(settings.tuning.front_back_source_max_uv, 0.001, 2.00);
         settings.tuning.metallic = clamp_double(settings.tuning.metallic, 0.0, 1.0);
         settings.tuning.roughness = clamp_double(settings.tuning.roughness, 0.0, 1.0);
-        settings.tuning.server_batch_limit = std::max(1, std::min(1000000, settings.tuning.server_batch_limit));
-        settings.tuning.server_batch_delay_ms = std::max(0, std::min(1000, settings.tuning.server_batch_delay_ms));
+        settings.tuning.server_batch_limit = std::max(1, std::min(50, settings.tuning.server_batch_limit));
+        settings.tuning.server_batch_delay_ms = std::max(150, std::min(500, settings.tuning.server_batch_delay_ms));
         settings.tuning.fill_color_r = clamp_double(settings.tuning.fill_color_r, 0.0, 1.0);
         settings.tuning.fill_color_g = clamp_double(settings.tuning.fill_color_g, 0.0, 1.0);
         settings.tuning.fill_color_b = clamp_double(settings.tuning.fill_color_b, 0.0, 1.0);

@@ -1058,8 +1058,8 @@ namespace meccha
                     bool paint_value_changed = false;
                     field_double("Brush size (texels)", tuning.stroke_size_texels, 1.0, 12.0, "%.1f", runtime.paint_editing, paint_value_changed);
                     field_double("Coverage step (texels)", tuning.coverage_step_texels, 1.0, 12.0, "%.1f", runtime.paint_editing, paint_value_changed);
-                    field_int("Batch limit", tuning.server_batch_limit, 1, 500, runtime.paint_editing, paint_value_changed);
-                    field_int("Batch delay (ms)", tuning.server_batch_delay_ms, 0, 500, runtime.paint_editing, paint_value_changed);
+                    field_int("Batch limit", tuning.server_batch_limit, 1, 50, runtime.paint_editing, paint_value_changed);
+                    field_int("Batch delay (ms)", tuning.server_batch_delay_ms, 150, 500, runtime.paint_editing, paint_value_changed);
                     field_checkbox("Material Properties", "MaterialPropertiesAuto", tuning.auto_material_properties, runtime.paint_editing, paint_value_changed);
                     field_double("Metallic", tuning.metallic, 0.0, 1.0, "%.6f", runtime.paint_editing && !tuning.auto_material_properties, paint_value_changed);
                     field_double("Roughness", tuning.roughness, 0.0, 1.0, "%.6f", runtime.paint_editing && !tuning.auto_material_properties, paint_value_changed);
