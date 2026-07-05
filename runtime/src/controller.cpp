@@ -3,6 +3,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <timeapi.h>
 #include <tlhelp32.h>
 #include <shellapi.h>
 #include <d3d11.h>
@@ -99,7 +100,7 @@ namespace
         int bridge_port{DefaultBridgePort};
         double bridge_timeout_seconds{360.0};
         double status_interval_seconds{2.0};
-        double frame_delay_ms{16.0};
+        double frame_delay_ms{1.0};
         std::string native_apply_mode{"mesh_first_paint"};
         bool preview_only{false};
         bool unpreview_only{false};
@@ -694,11 +695,63 @@ namespace
             addr.sin_family = AF_INET;
             addr.sin_port = htons(static_cast<u_short>(port_));
             inet_pton(AF_INET, host_.c_str(), &addr.sin_addr);
-            if (connect(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR)
+            u_long non_blocking_mode = 1;
+            if (ioctlsocket(s, FIONBIO, &non_blocking_mode) == SOCKET_ERROR)
             {
                 const DWORD err = WSAGetLastError();
                 closesocket(s);
-                return fail("connect_failed", err);
+                return fail("socket_ioctlsocket_failed", err);
+            }
+            int connect_res = connect(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+            if (connect_res == SOCKET_ERROR)
+            {
+                const DWORD err = WSAGetLastError();
+                if (err != WSAEWOULDBLOCK && err != WSAEINPROGRESS)
+                {
+                    closesocket(s);
+                    return fail("connect_failed", err);
+                }
+                fd_set write_set{};
+                FD_ZERO(&write_set);
+                FD_SET(s, &write_set);
+                fd_set err_set{};
+                FD_ZERO(&err_set);
+                FD_SET(s, &err_set);
+                timeval tv{};
+                tv.tv_sec = timeout_ms_ / 1000;
+                tv.tv_usec = (timeout_ms_ % 1000) * 1000;
+                int select_res = select(0, nullptr, &write_set, &err_set, &tv);
+                if (select_res == SOCKET_ERROR)
+                {
+                    const DWORD select_err = WSAGetLastError();
+                    closesocket(s);
+                    return fail("connect_select_failed", select_err);
+                }
+                if (select_res == 0)
+                {
+                    closesocket(s);
+                    return fail("connect_timeout", WSAETIMEDOUT);
+                }
+                int sock_err = 0;
+                int sock_err_len = sizeof(sock_err);
+                if (getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&sock_err), &sock_err_len) == SOCKET_ERROR)
+                {
+                    const DWORD get_err = WSAGetLastError();
+                    closesocket(s);
+                    return fail("connect_getsockopt_failed", get_err);
+                }
+                if (sock_err != 0)
+                {
+                    closesocket(s);
+                    return fail("connect_failed", static_cast<DWORD>(sock_err));
+                }
+            }
+            u_long blocking_mode = 0;
+            if (ioctlsocket(s, FIONBIO, &blocking_mode) == SOCKET_ERROR)
+            {
+                const DWORD err = WSAGetLastError();
+                closesocket(s);
+                return fail("socket_ioctlsocket_restore_failed", err);
             }
             const std::string line = make_request_line(command, payload_json);
             const int sent = send(s, line.c_str(), static_cast<int>(line.size()), 0);
@@ -3051,6 +3104,7 @@ namespace
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 {
+    timeBeginPeriod(1);
     int argc = 0;
     wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (!argv)
@@ -3126,5 +3180,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     }
     WSACleanup();
     LocalFree(argv);
+    timeEndPeriod(1);
     return code;
 }

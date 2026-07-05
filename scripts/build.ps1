@@ -190,7 +190,8 @@ try {
         "/Fo:$(Join-Path $ObjDir 'bridge.obj')",
         "/Fe:$BridgeOutput",
         "Ws2_32.lib",
-        "User32.lib"
+        "User32.lib",
+        "Winmm.lib"
     )
     Invoke-VsToolCommand -ToolName "cl.exe" -ToolArgs @(
         "/nologo", "/EHsc", "/O2", $InjectorSource,
@@ -260,6 +261,7 @@ try {
         "Dwmapi.lib",
         "Windowscodecs.lib",
         "Ole32.lib",
+        "Winmm.lib",
         "/link",
         "/SUBSYSTEM:WINDOWS"
     )

@@ -5,6 +5,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <timeapi.h>
 
 #include <algorithm>
 #include <array>
@@ -173,6 +174,7 @@ namespace
     std::mutex g_paint_jobs_mutex;
     std::condition_variable g_paint_jobs_cv;
     std::vector<std::shared_ptr<QueuedPaintJob>> g_paint_jobs;
+    std::atomic<bool> g_paint_jobs_active{false};
     std::atomic<bool> g_mesh_snapshot_ready{false};
     std::atomic<bool> g_dump_cancel_requested{false};
 
@@ -9734,6 +9736,7 @@ namespace
 
     std::mutex g_mesh_first_batch_mutex;
     std::shared_ptr<MeshFirstServerBatchAsyncJob> g_mesh_first_batch_job{};
+    std::atomic<bool> g_mesh_first_batch_active{false};
 
     auto is_mesh_first_paint_request(const std::string& request) -> bool
     {
@@ -11339,6 +11342,7 @@ namespace
             {
                 std::lock_guard<std::mutex> lock(g_mesh_first_batch_mutex);
                 g_mesh_first_batch_job = async_job;
+                g_mesh_first_batch_active.store(true, std::memory_order_release);
             }
             write_bridge_progress("mesh_server_batch_begin",
                                   "mesh-first " + async_job->server_batch_rpc + " stream prepared",
@@ -11382,6 +11386,7 @@ namespace
             if (g_mesh_first_batch_job == job)
             {
                 g_mesh_first_batch_job.reset();
+                g_mesh_first_batch_active.store(false, std::memory_order_release);
             }
         }
     }
@@ -11523,6 +11528,7 @@ namespace
         {
             std::lock_guard<std::mutex> lock(g_paint_jobs_mutex);
             jobs.swap(g_paint_jobs);
+            g_paint_jobs_active.store(false, std::memory_order_release);
         }
         const std::string cancel_reason = reason && *reason ? reason : "cancelled";
         for (const auto& job : jobs)
@@ -11540,6 +11546,10 @@ namespace
 
     auto tick_mesh_first_batch_async_job() -> void
     {
+        if (!g_mesh_first_batch_active.load(std::memory_order_acquire))
+        {
+            return;
+        }
         std::shared_ptr<MeshFirstServerBatchAsyncJob> job{};
         {
             std::lock_guard<std::mutex> lock(g_mesh_first_batch_mutex);
@@ -15366,38 +15376,42 @@ namespace
     {
         tick_mesh_first_batch_async_job();
 
-        std::vector<std::shared_ptr<QueuedPaintJob>> jobs{};
+        if (g_paint_jobs_active.load(std::memory_order_acquire))
         {
-            std::lock_guard<std::mutex> lock(g_paint_jobs_mutex);
-            jobs.swap(g_paint_jobs);
-        }
-        for (const auto& job : jobs)
-        {
-            if (!job)
+            std::vector<std::shared_ptr<QueuedPaintJob>> jobs{};
             {
-                continue;
+                std::lock_guard<std::mutex> lock(g_paint_jobs_mutex);
+                jobs.swap(g_paint_jobs);
+                g_paint_jobs_active.store(false, std::memory_order_release);
             }
-            if (is_paint_packed_replay_probe_request(job->request))
+            for (const auto& job : jobs)
             {
-                mark_queued_paint_job_dispatched(job);
-                const auto response = paint_packed_replay_probe_on_game_thread(job->request);
+                if (!job)
+                {
+                    continue;
+                }
+                if (is_paint_packed_replay_probe_request(job->request))
+                {
+                    mark_queued_paint_job_dispatched(job);
+                    const auto response = paint_packed_replay_probe_on_game_thread(job->request);
+                    complete_queued_paint_job(job, response);
+                    continue;
+                }
+                if (is_paint_replication_probe_request(job->request))
+                {
+                    mark_queued_paint_job_dispatched(job);
+                    const auto response = paint_replication_probe_on_game_thread(job->request);
+                    complete_queued_paint_job(job, response);
+                    continue;
+                }
+                if (is_mesh_first_paint_request(job->request))
+                {
+                    start_mesh_first_paint_async_job(job->request, job);
+                    continue;
+                }
+                const auto response = paint_full_route_native_direct(job->request);
                 complete_queued_paint_job(job, response);
-                continue;
             }
-            if (is_paint_replication_probe_request(job->request))
-            {
-                mark_queued_paint_job_dispatched(job);
-                const auto response = paint_replication_probe_on_game_thread(job->request);
-                complete_queued_paint_job(job, response);
-                continue;
-            }
-            if (is_mesh_first_paint_request(job->request))
-            {
-                start_mesh_first_paint_async_job(job->request, job);
-                continue;
-            }
-            const auto response = paint_full_route_native_direct(job->request);
-            complete_queued_paint_job(job, response);
         }
 
         tick_mesh_first_batch_async_job();
@@ -15488,6 +15502,7 @@ namespace
         {
             std::lock_guard<std::mutex> lock(g_paint_jobs_mutex);
             g_paint_jobs.push_back(job);
+            g_paint_jobs_active.store(true, std::memory_order_release);
         }
         g_paint_jobs_cv.notify_all();
         post_paint_dispatch_message();
@@ -15531,6 +15546,7 @@ namespace
         if (!completed)
         {
             g_paint_jobs.erase(std::remove(g_paint_jobs.begin(), g_paint_jobs.end(), job), g_paint_jobs.end());
+            g_paint_jobs_active.store(!g_paint_jobs.empty(), std::memory_order_release);
             if (!job->dispatched)
             {
                 job->response = response_json(false,
@@ -15665,6 +15681,7 @@ namespace
 
     auto bridge_thread() -> void
     {
+        timeBeginPeriod(1);
         start_auto_event_watch_if_configured();
 
         const int bridge_port = resolve_bridge_port();
@@ -15739,6 +15756,7 @@ namespace
         WSACleanup();
         write_bridge_listener_status("stopped", bridge_port);
         uninstall_process_event_hook();
+        timeEndPeriod(1);
         HMODULE module = g_module;
         g_module = nullptr;
         if (module != nullptr)
