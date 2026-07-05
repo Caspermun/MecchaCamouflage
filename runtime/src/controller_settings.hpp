@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace meccha
 {
@@ -36,6 +37,12 @@ namespace meccha
         bool allow_unsafe_paint{false};
     };
 
+    struct PresetProfile
+    {
+        std::string name;
+        PaintTuning tuning;
+    };
+
     struct AppSettings
     {
         int layout_version{33};
@@ -56,6 +63,9 @@ namespace meccha
         bool show_warning{true};
         bool show_error{true};
         int bridge_port{50262};
+        std::vector<PresetProfile> presets{};
+        int selected_preset_index{0};
+        std::vector<std::string> color_swatches{};
     };
 
     auto default_app_dir() -> std::filesystem::path;

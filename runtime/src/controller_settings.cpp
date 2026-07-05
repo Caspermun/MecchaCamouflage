@@ -184,6 +184,139 @@ namespace meccha
             return "paint";
         }
 
+        auto extract_json_string_array(const std::string& text, const std::string& key) -> std::vector<std::string>
+        {
+            std::vector<std::string> out;
+            const std::string needle = std::string("\"") + key + "\":[";
+            const auto start = text.find(needle);
+            if (start == std::string::npos)
+                return out;
+            auto pos = start + needle.size();
+            while (pos < text.size() && text[pos] != ']')
+            {
+                if (text[pos] == '"')
+                {
+                    std::string item;
+                    ++pos;
+                    while (pos < text.size() && text[pos] != '"')
+                    {
+                        item.push_back(text[pos]);
+                        ++pos;
+                    }
+                    if (!item.empty())
+                        out.push_back(item);
+                }
+                ++pos;
+            }
+            return out;
+        }
+
+        auto extract_presets(const std::string& text) -> std::vector<PresetProfile>
+        {
+            std::vector<PresetProfile> out;
+            const std::string needle = "\"presets\":[";
+            const auto start = text.find(needle);
+            if (start == std::string::npos)
+                return out;
+            auto pos = start + needle.size();
+            int bracket_count = 1;
+            std::string array_content;
+            while (pos < text.size() && bracket_count > 0)
+            {
+                const char c = text[pos];
+                if (c == '[')
+                    ++bracket_count;
+                else if (c == ']')
+                    --bracket_count;
+                if (bracket_count > 0)
+                    array_content.push_back(c);
+                ++pos;
+            }
+            std::size_t obj_start = 0;
+            while ((obj_start = array_content.find('{', obj_start)) != std::string::npos)
+            {
+                const auto obj_end = array_content.find('}', obj_start);
+                if (obj_end == std::string::npos)
+                    break;
+                const std::string obj_str = array_content.substr(obj_start, obj_end - obj_start + 1);
+                PresetProfile profile{};
+                profile.name = extract_json_string(obj_str, "name");
+                if (!profile.name.empty())
+                {
+                    PaintTuning t{};
+                    t.stroke_size_texels = extract_json_number(obj_str, "stroke_size_texels", t.stroke_size_texels);
+                    t.coverage_step_texels = extract_json_number(obj_str, "coverage_step_texels", t.coverage_step_texels);
+                    t.side_source_max_uv = extract_json_number(obj_str, "side_source_max_uv", t.side_source_max_uv);
+                    t.front_back_source_max_uv = extract_json_number(obj_str, "front_back_source_max_uv", t.front_back_source_max_uv);
+                    t.front_region_mode = string_to_region_mode(extract_json_string(obj_str, "front_region_mode"), t.front_region_mode);
+                    t.side_region_mode = string_to_region_mode(extract_json_string(obj_str, "side_region_mode"), t.side_region_mode);
+                    t.back_region_mode = string_to_region_mode(extract_json_string(obj_str, "back_region_mode"), t.back_region_mode);
+                    t.server_batch_limit = static_cast<int>(extract_json_number(obj_str, "server_batch_limit", t.server_batch_limit));
+                    t.server_batch_delay_ms = static_cast<int>(extract_json_number(obj_str, "server_batch_delay_ms", t.server_batch_delay_ms));
+                    t.auto_material_properties = extract_json_bool(obj_str, "auto_material_properties", t.auto_material_properties);
+                    t.metallic = extract_json_number(obj_str, "metallic", t.metallic);
+                    t.roughness = extract_json_number(obj_str, "roughness", t.roughness);
+                    t.fill_color_r = extract_json_number(obj_str, "fill_color_r", t.fill_color_r);
+                    t.fill_color_g = extract_json_number(obj_str, "fill_color_g", t.fill_color_g);
+                    t.fill_color_b = extract_json_number(obj_str, "fill_color_b", t.fill_color_b);
+                    t.fill_metallic = extract_json_number(obj_str, "fill_metallic", t.fill_metallic);
+                    t.fill_roughness = extract_json_number(obj_str, "fill_roughness", t.fill_roughness);
+                    t.allow_unsafe_paint = extract_json_bool(obj_str, "allow_unsafe_paint", t.allow_unsafe_paint);
+                    profile.tuning = t;
+                    out.push_back(profile);
+                }
+                obj_start = obj_end + 1;
+            }
+            return out;
+        }
+
+        auto serialize_presets(const std::vector<PresetProfile>& presets) -> std::string
+        {
+            std::string out = "[";
+            for (std::size_t i = 0; i < presets.size(); ++i)
+            {
+                const auto& p = presets[i];
+                out += "{\n";
+                out += "      \"name\": " + json_string(p.name) + ",\n";
+                out += "      \"stroke_size_texels\": " + std::to_string(p.tuning.stroke_size_texels) + ",\n";
+                out += "      \"coverage_step_texels\": " + std::to_string(p.tuning.coverage_step_texels) + ",\n";
+                out += "      \"side_source_max_uv\": " + std::to_string(p.tuning.side_source_max_uv) + ",\n";
+                out += "      \"front_back_source_max_uv\": " + std::to_string(p.tuning.front_back_source_max_uv) + ",\n";
+                out += "      \"front_region_mode\": " + json_string(region_mode_to_string(p.tuning.front_region_mode)) + ",\n";
+                out += "      \"side_region_mode\": " + json_string(region_mode_to_string(p.tuning.side_region_mode)) + ",\n";
+                out += "      \"back_region_mode\": " + json_string(region_mode_to_string(p.tuning.back_region_mode)) + ",\n";
+                out += "      \"server_batch_limit\": " + std::to_string(p.tuning.server_batch_limit) + ",\n";
+                out += "      \"server_batch_delay_ms\": " + std::to_string(p.tuning.server_batch_delay_ms) + ",\n";
+                out += "      \"auto_material_properties\": " + std::string(p.tuning.auto_material_properties ? "true" : "false") + ",\n";
+                out += "      \"metallic\": " + std::to_string(p.tuning.metallic) + ",\n";
+                out += "      \"roughness\": " + std::to_string(p.tuning.roughness) + ",\n";
+                out += "      \"fill_color_r\": " + std::to_string(p.tuning.fill_color_r) + ",\n";
+                out += "      \"fill_color_g\": " + std::to_string(p.tuning.fill_color_g) + ",\n";
+                out += "      \"fill_color_b\": " + std::to_string(p.tuning.fill_color_b) + ",\n";
+                out += "      \"fill_metallic\": " + std::to_string(p.tuning.fill_metallic) + ",\n";
+                out += "      \"fill_roughness\": " + std::to_string(p.tuning.fill_roughness) + ",\n";
+                out += "      \"allow_unsafe_paint\": " + std::string(p.tuning.allow_unsafe_paint ? "true" : "false") + "\n";
+                out += "    }";
+                if (i + 1 < presets.size())
+                    out += ",";
+            }
+            out += "]";
+            return out;
+        }
+
+        auto serialize_color_swatches(const std::vector<std::string>& swatches) -> std::string
+        {
+            std::string out = "[";
+            for (std::size_t i = 0; i < swatches.size(); ++i)
+            {
+                out += json_string(swatches[i]);
+                if (i + 1 < swatches.size())
+                    out += ",";
+            }
+            out += "]";
+            return out;
+        }
+
         auto app_version_scope() -> std::wstring
         {
             std::string scope;
@@ -326,6 +459,41 @@ namespace meccha
         settings.tuning.allow_unsafe_paint = extract_json_bool(text, "allow_unsafe_paint", settings.tuning.allow_unsafe_paint);
         settings.bridge_port = static_cast<int>(extract_json_number(text, "bridge_port", settings.bridge_port));
 
+        settings.selected_preset_index = static_cast<int>(extract_json_number(text, "selected_preset_index", settings.selected_preset_index));
+        settings.presets = extract_presets(text);
+        settings.color_swatches = extract_json_string_array(text, "color_swatches");
+
+        if (settings.color_swatches.empty())
+        {
+            settings.color_swatches = {
+                "#FFFFFF", "#000000", "#FF0000", "#00FF00",
+                "#0000FF", "#FFFF00", "#FF00FF", "#00FFFF",
+                "#808080", "#FF8000", "#800080", "#008080"
+            };
+        }
+        if (settings.presets.empty())
+        {
+            PresetProfile def{};
+            def.name = "Default Paint";
+            def.tuning = settings.tuning;
+            settings.presets.push_back(def);
+
+            PresetProfile fast{};
+            fast.name = "Fast Multiplayer Paint";
+            fast.tuning = settings.tuning;
+            fast.tuning.server_batch_limit = 50;
+            fast.tuning.server_batch_delay_ms = 150;
+            settings.presets.push_back(fast);
+
+            PresetProfile metal{};
+            metal.name = "Shiny Matte Metal";
+            metal.tuning = settings.tuning;
+            metal.tuning.auto_material_properties = false;
+            metal.tuning.metallic = 1.0;
+            metal.tuning.roughness = 0.2;
+            settings.presets.push_back(metal);
+        }
+
         clamp_settings(settings);
         return settings;
     }
@@ -365,7 +533,10 @@ namespace meccha
             "  \"fill_metallic\": " + std::to_string(settings.tuning.fill_metallic) + ",\n" +
             "  \"fill_roughness\": " + std::to_string(settings.tuning.fill_roughness) + ",\n" +
             "  \"allow_unsafe_paint\": " + std::string(settings.tuning.allow_unsafe_paint ? "true" : "false") + ",\n" +
-            "  \"bridge_port\": " + std::to_string(settings.bridge_port) + "\n" +
+            "  \"bridge_port\": " + std::to_string(settings.bridge_port) + ",\n" +
+            "  \"selected_preset_index\": " + std::to_string(settings.selected_preset_index) + ",\n" +
+            "  \"presets\": " + serialize_presets(settings.presets) + ",\n" +
+            "  \"color_swatches\": " + serialize_color_swatches(settings.color_swatches) + "\n" +
             "}\n";
         const auto path = config_path();
         const auto tmp = std::filesystem::path(path.wstring() + L".tmp");
