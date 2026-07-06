@@ -25,11 +25,6 @@ namespace meccha
 {
     namespace
     {
-        // translation stub (English only)
-        auto _L(const char* text) -> const char*
-        {
-            return text;
-        }
 
         ImFont* g_heading_font = nullptr;
         ImFont* g_log_font = nullptr;
@@ -1061,12 +1056,12 @@ namespace meccha
                                 SettingsPanelFlags,
                                 SettingsPanelWindowFlags))
                 {
-                    section_header(_L("PAINT SETTINGS"), true);
+                    section_header("PAINT SETTINGS", true);
                     PaintTuning tuning = runtime.paint_editing ? draft.tuning : persisted.tuning;
                     bool paint_value_changed = false;
 
                     // Presets combobox and buttons
-                    ImGui::TextDisabled("%s", _L("PRESETS"));
+                    ImGui::TextDisabled("%s", "PRESETS");
                     std::vector<const char*> preset_names;
                     for (const auto& p : draft.presets)
                         preset_names.push_back(p.name.c_str());
@@ -1084,16 +1079,16 @@ namespace meccha
                         }
                     }
                     ImGui::SameLine();
-                    if (ImGui::Button(_L("Save Preset"), ImVec2(76.0f, 0.0f)))
+                    if (ImGui::Button("Save Preset", ImVec2(76.0f, 0.0f)))
                     {
                         ImGui::OpenPopup("SavePresetPopup");
                     }
                     if (ImGui::BeginPopup("SavePresetPopup"))
                     {
                         static char preset_name[64] = "";
-                        ImGui::Text("%s", _L("Enter preset name..."));
+                        ImGui::Text("%s", "Enter preset name...");
                         ImGui::InputText("##preset_name_input", preset_name, IM_ARRAYSIZE(preset_name));
-                        if (ImGui::Button(_L("Save"), ImVec2(60.0f, 0.0f)))
+                        if (ImGui::Button("Save", ImVec2(60.0f, 0.0f)))
                         {
                             if (strlen(preset_name) > 0)
                             {
@@ -1108,7 +1103,7 @@ namespace meccha
                             }
                         }
                         ImGui::SameLine();
-                        if (ImGui::Button(_L("Cancel"), ImVec2(60.0f, 0.0f)))
+                        if (ImGui::Button("Cancel", ImVec2(60.0f, 0.0f)))
                         {
                             ImGui::CloseCurrentPopup();
                         }
@@ -1117,18 +1112,18 @@ namespace meccha
                     ImGui::EndDisabled();
                     ImGui::Spacing();
 
-                    field_double(_L("Brush size (texels)"), tuning.stroke_size_texels, 1.0, 12.0, "%.1f", runtime.paint_editing, paint_value_changed);
-                    field_double(_L("Coverage step (texels)"), tuning.coverage_step_texels, 1.0, 12.0, "%.1f", runtime.paint_editing, paint_value_changed);
-                    field_int(_L("Batch limit"), tuning.server_batch_limit, 1, 50, runtime.paint_editing, paint_value_changed);
-                    field_int(_L("Batch delay (ms)"), tuning.server_batch_delay_ms, 150, 500, runtime.paint_editing, paint_value_changed);
-                    field_checkbox(_L("Material Properties"), "MaterialPropertiesAuto", tuning.auto_material_properties, runtime.paint_editing, paint_value_changed);
-                    field_checkbox(_L("Allow Unsafe Paint"), "AllowUnsafePaint", tuning.allow_unsafe_paint, runtime.paint_editing, paint_value_changed);
-                    field_double(_L("Metallic"), tuning.metallic, 0.0, 1.0, "%.6f", runtime.paint_editing && !tuning.auto_material_properties, paint_value_changed);
-                    field_double(_L("Roughness"), tuning.roughness, 0.0, 1.0, "%.6f", runtime.paint_editing && !tuning.auto_material_properties, paint_value_changed);
+                    field_double("Brush size (texels)", tuning.stroke_size_texels, 1.0, 12.0, "%.1f", runtime.paint_editing, paint_value_changed);
+                    field_double("Coverage step (texels)", tuning.coverage_step_texels, 1.0, 12.0, "%.1f", runtime.paint_editing, paint_value_changed);
+                    field_int("Batch limit", tuning.server_batch_limit, 1, 50, runtime.paint_editing, paint_value_changed);
+                    field_int("Batch delay (ms)", tuning.server_batch_delay_ms, 150, 500, runtime.paint_editing, paint_value_changed);
+                    field_checkbox("Material Properties", "MaterialPropertiesAuto", tuning.auto_material_properties, runtime.paint_editing, paint_value_changed);
+                    field_checkbox("Allow Unsafe Paint", "AllowUnsafePaint", tuning.allow_unsafe_paint, runtime.paint_editing, paint_value_changed);
+                    field_double("Metallic", tuning.metallic, 0.0, 1.0, "%.6f", runtime.paint_editing && !tuning.auto_material_properties, paint_value_changed);
+                    field_double("Roughness", tuning.roughness, 0.0, 1.0, "%.6f", runtime.paint_editing && !tuning.auto_material_properties, paint_value_changed);
                     
-                    region_mode_combo(_L("Front Region Mode"), "FrontRegionModeCombo", tuning.front_region_mode, runtime.paint_editing, paint_value_changed);
-                    region_mode_combo(_L("Side Region Mode"), "SideRegionModeCombo", tuning.side_region_mode, runtime.paint_editing, paint_value_changed);
-                    region_mode_combo(_L("Back Region Mode"), "BackRegionModeCombo", tuning.back_region_mode, runtime.paint_editing, paint_value_changed);
+                    region_mode_combo("Front Region Mode", "FrontRegionModeCombo", tuning.front_region_mode, runtime.paint_editing, paint_value_changed);
+                    region_mode_combo("Side Region Mode", "SideRegionModeCombo", tuning.side_region_mode, runtime.paint_editing, paint_value_changed);
+                    region_mode_combo("Back Region Mode", "BackRegionModeCombo", tuning.back_region_mode, runtime.paint_editing, paint_value_changed);
 
                     const bool uses_fill = (tuning.front_region_mode == RegionMode::Fill ||
                                             tuning.side_region_mode == RegionMode::Fill ||
@@ -1136,11 +1131,11 @@ namespace meccha
                     if (uses_fill)
                     {
                         ImGui::Spacing();
-                        ImGui::TextDisabled("%s", _L("FILL SETTINGS"));
-                        field_color(_L("Fill color"), "FillColorPicker", tuning.fill_color_r, tuning.fill_color_g, tuning.fill_color_b, runtime.paint_editing, paint_value_changed);
+                        ImGui::TextDisabled("%s", "FILL SETTINGS");
+                        field_color("Fill color", "FillColorPicker", tuning.fill_color_r, tuning.fill_color_g, tuning.fill_color_b, runtime.paint_editing, paint_value_changed);
 
                         // Color Palette Swatches
-                        ImGui::TextDisabled("%s", _L("Color Palette"));
+                        ImGui::TextDisabled("%s", "Color Palette");
                         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 4.0f));
                         for (std::size_t i = 0; i < draft.color_swatches.size(); ++i)
                         {
@@ -1175,8 +1170,8 @@ namespace meccha
                         ImGui::PopStyleVar();
                         ImGui::Spacing();
 
-                        field_double(_L("Fill metallic"), tuning.fill_metallic, 0.0, 1.0, "%.6f", runtime.paint_editing, paint_value_changed);
-                        field_double(_L("Fill roughness"), tuning.fill_roughness, 0.0, 1.0, "%.6f", runtime.paint_editing, paint_value_changed);
+                        field_double("Fill metallic", tuning.fill_metallic, 0.0, 1.0, "%.6f", runtime.paint_editing, paint_value_changed);
+                        field_double("Fill roughness", tuning.fill_roughness, 0.0, 1.0, "%.6f", runtime.paint_editing, paint_value_changed);
                     }
 
                     if (runtime.paint_editing && paint_value_changed)
@@ -1193,13 +1188,13 @@ namespace meccha
                     ImDrawListSplitter app_block_splitter;
                     app_block_splitter.Split(settings_draw, 2);
                     app_block_splitter.SetCurrentChannel(settings_draw, 1);
-                    section_header(_L("APP SETTINGS"));
+                    section_header("APP SETTINGS");
                     bool always_on_top = runtime.app_editing ? draft.always_on_top : persisted.always_on_top;
                     float opacity = runtime.app_editing ? draft.opacity : persisted.opacity;
                     bool app_value_changed = false;
 
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1.0f);
-                    app_row(_L("Start Hotkey"));
+                    app_row("Start Hotkey");
                     const float hotkey_input_width = 82.0f;
                     const float record_width = std::max(1.0f, app_control_width() - hotkey_input_width - style.ItemSpacing.x);
                     if (runtime.recording_start_hotkey)
@@ -1212,7 +1207,7 @@ namespace meccha
                                        hotkey_input_width);
 
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1.0f);
-                    app_row(_L("Preview Hotkey"));
+                    app_row("Preview Hotkey");
                     if (runtime.recording_preview_hotkey)
                         app_frame_button("PreviewHotkeyRecordButton", "Press key...", runtime.app_editing, ImVec2(record_width, 0.0f));
                     else if (app_frame_button("PreviewHotkeyRecordButton", "Record", runtime.app_editing, ImVec2(record_width, 0.0f)))
@@ -1223,7 +1218,7 @@ namespace meccha
                                        hotkey_input_width);
 
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1.0f);
-                    app_row(_L("UnPreview Hotkey"));
+                    app_row("UnPreview Hotkey");
                     if (runtime.recording_unpreview_hotkey)
                         app_frame_button("UnPreviewHotkeyRecordButton", "Press key...", runtime.app_editing, ImVec2(record_width, 0.0f));
                     else if (app_frame_button("UnPreviewHotkeyRecordButton", "Record", runtime.app_editing, ImVec2(record_width, 0.0f)))
@@ -1234,7 +1229,7 @@ namespace meccha
                                        hotkey_input_width);
 
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1.0f);
-                    app_row(_L("Stop Hotkey"));
+                    app_row("Stop Hotkey");
                     if (runtime.recording_stop_hotkey)
                         app_frame_button("StopHotkeyRecordButton", "Press key...", runtime.app_editing, ImVec2(record_width, 0.0f));
                     else if (app_frame_button("StopHotkeyRecordButton", "Record", runtime.app_editing, ImVec2(record_width, 0.0f)))
@@ -1245,12 +1240,12 @@ namespace meccha
                                        hotkey_input_width);
 
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1.0f);
-                    const float always_on_top_row_top = app_row(_L("Always on top"));
+                    const float always_on_top_row_top = app_row("Always on top");
                     ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, always_on_top_row_top + 4.0f));
                     if (checkbox_box("AlwaysOnTop", always_on_top, runtime.app_editing))
                         app_value_changed = true;
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1.0f);
-                    app_row(_L("Opacity"));
+                    app_row("Opacity");
                     int opacity_percent = static_cast<int>(opacity * 100.0f + 0.5f);
                     ImGui::BeginDisabled(!runtime.app_editing);
                     const float opacity_input_width = 82.0f;
@@ -1270,7 +1265,7 @@ namespace meccha
                     }
                     ImGui::EndDisabled();
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1.0f);
-                    app_row(_L("Connection Port"));
+                    app_row("Connection Port");
                     int bridge_port = runtime.app_editing ? draft.bridge_port : persisted.bridge_port;
                     ImGui::BeginDisabled(!runtime.app_editing);
                     ImGui::SetNextItemWidth(app_control_width());
@@ -1286,7 +1281,7 @@ namespace meccha
                     }
                     ImGui::EndDisabled();
 
-                    app_row(_L("Logs"));
+                    app_row("Logs");
                     ImGui::PushID("OpenLogsIcon");
                     const ImVec2 log_button_pos = ImGui::GetCursorScreenPos();
                     const float log_button_size = ImGui::GetFrameHeight();
@@ -1326,25 +1321,25 @@ namespace meccha
                     ImGui::SetCursorPosX(actions_x);
                     ImGui::PushID("PaintFooterActions");
                     const bool editing_any = runtime.paint_editing || runtime.app_editing;
-                    if (action_button(_L("Reset"), editing_any, false, ImVec2(button_width, 28.0f)))
+                    if (action_button("Reset", editing_any, false, ImVec2(button_width, 28.0f)))
                     {
                         actions.reset_app_clicked = true;
                         actions.reset_paint_clicked = true;
                     }
                     ImGui::SameLine();
-                    if (action_button(_L("Cancel"), editing_any, false, ImVec2(button_width, 28.0f)))
+                    if (action_button("Cancel", editing_any, false, ImVec2(button_width, 28.0f)))
                     {
                         actions.cancel_app_clicked = true;
                         actions.cancel_paint_clicked = true;
                     }
                     ImGui::SameLine();
-                    if (action_button(_L("Edit"), !editing_any, false, ImVec2(button_width, 28.0f)))
+                    if (action_button("Edit", !editing_any, false, ImVec2(button_width, 28.0f)))
                     {
                         actions.edit_app_clicked = true;
                         actions.edit_paint_clicked = true;
                     }
                     ImGui::SameLine();
-                    if (action_button(_L("Save"), editing_any, true, ImVec2(button_width, 28.0f)))
+                    if (action_button("Save", editing_any, true, ImVec2(button_width, 28.0f)))
                     {
                         actions.save_app_clicked = true;
                         actions.save_paint_clicked = true;
@@ -1376,20 +1371,20 @@ namespace meccha
                     {
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);
-                        metric_card(_L("PROCESS"),
-                                    runtime.game_attached ? _L("ATTACHED") : _L("WAITING"),
+                        metric_card("PROCESS",
+                                    runtime.game_attached ? "ATTACHED" : "WAITING",
                                     status_color(runtime.game_attached ? "attached" : "waiting"));
                         ImGui::TableSetColumnIndex(1);
-                        metric_card(_L("BRIDGE"),
-                                    runtime.bridge_ready ? _L("READY") : _L("WAITING"),
+                        metric_card("BRIDGE",
+                                    runtime.bridge_ready ? "READY" : "WAITING",
                                     status_color(runtime.bridge_ready ? "ready" : "waiting"));
                         ImGui::TableSetColumnIndex(2);
-                        metric_card(_L("SERVICE"),
-                                    runtime.service_state.empty() ? "-" : (runtime.service_state == "Running" ? _L("Running") : (runtime.service_state == "Stopped" ? _L("Stopped") : runtime.service_state.c_str())),
+                        metric_card("SERVICE",
+                                    runtime.service_state.empty() ? "-" : (runtime.service_state == "Running" ? "Running" : (runtime.service_state == "Stopped" ? "Stopped" : runtime.service_state.c_str())),
                                     status_color(runtime.service_state));
                         ImGui::TableSetColumnIndex(3);
-                        metric_card(_L("PAINT"),
-                                    runtime.paint_ready ? _L("READY") : (runtime.paint_running ? _L("RUNNING") : _L("WAITING")),
+                        metric_card("PAINT",
+                                    runtime.paint_ready ? "READY" : (runtime.paint_running ? "RUNNING" : "WAITING"),
                                     status_color(runtime.paint_ready ? "ready" : (runtime.paint_running ? "running" : "waiting")));
                         ImGui::EndTable();
                     }
@@ -1402,13 +1397,13 @@ namespace meccha
                     {
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);
-                        metric_card(_L("SERVER ETA"), runtime.metric_server_eta);
+                        metric_card("SERVER ETA", runtime.metric_server_eta);
                         ImGui::TableSetColumnIndex(1);
-                        metric_card(_L("SERVER ELAPSED"), runtime.metric_server_elapsed);
+                        metric_card("SERVER ELAPSED", runtime.metric_server_elapsed);
                         ImGui::TableSetColumnIndex(2);
-                        metric_card(_L("PAINT ETA"), runtime.metric_apply_eta);
+                        metric_card("PAINT ETA", runtime.metric_apply_eta);
                         ImGui::TableSetColumnIndex(3);
-                        metric_card(_L("PAINT ELAPSED"), runtime.metric_apply_elapsed);
+                        metric_card("PAINT ELAPSED", runtime.metric_apply_elapsed);
                         ImGui::EndTable();
                     }
                 }
@@ -1416,26 +1411,26 @@ namespace meccha
 
                 // Live Diagnostics Collapsible Panel
                 ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2.0f);
-                if (ImGui::CollapsingHeader(_L("LIVE DIAGNOSTICS"), ImGuiTreeNodeFlags_DefaultOpen))
+                if (ImGui::CollapsingHeader("LIVE DIAGNOSTICS", ImGuiTreeNodeFlags_DefaultOpen))
                 {
                     ImGui::Indent(8.0f);
                     if (ImGui::BeginTable("DiagnosticsGrid", 2, ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchSame))
                     {
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);
-                        ImGui::TextDisabled("%s", _L("Mesh Name"));
+                        ImGui::TextDisabled("%s", "Mesh Name");
                         ImGui::TableSetColumnIndex(1);
                         ImGui::Text("%s", runtime.mesh_status.empty() ? "-" : runtime.mesh_status.c_str());
                         
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);
-                        ImGui::TextDisabled("%s", _L("Vertex Count"));
+                        ImGui::TextDisabled("%s", "Vertex Count");
                         ImGui::TableSetColumnIndex(1);
                         ImGui::Text("%s", runtime.planner_status.empty() ? "-" : runtime.planner_status.c_str());
                         
                         ImGui::TableNextRow();
                         ImGui::TableSetColumnIndex(0);
-                        ImGui::TextDisabled("%s", _L("Paint Timings"));
+                        ImGui::TextDisabled("%s", "Paint Timings");
                         ImGui::TableSetColumnIndex(1);
                         ImGui::Text("%s", runtime.replay_status.empty() ? "-" : runtime.replay_status.c_str());
                         
@@ -1451,7 +1446,7 @@ namespace meccha
                     ImGui::SetCursorPosX(16.0f);
                     const bool all_active = draft.show_info && draft.show_warning && draft.show_error;
                     bool all_filter = all_active;
-                    if (custom_checkbox(_L("All"), all_filter, true))
+                    if (custom_checkbox("All", all_filter, true))
                     {
                         draft.show_info = all_filter;
                         draft.show_warning = all_filter;
@@ -1459,17 +1454,17 @@ namespace meccha
                         actions.settings_changed = true;
                     }
                     ImGui::SameLine();
-                    if (custom_checkbox(_L("Info"), draft.show_info, true))
+                    if (custom_checkbox("Info", draft.show_info, true))
                     {
                         actions.settings_changed = true;
                     }
                     ImGui::SameLine();
-                    if (custom_checkbox(_L("Warn"), draft.show_warning, true))
+                    if (custom_checkbox("Warn", draft.show_warning, true))
                     {
                         actions.settings_changed = true;
                     }
                     ImGui::SameLine();
-                    if (custom_checkbox(_L("Error"), draft.show_error, true))
+                    if (custom_checkbox("Error", draft.show_error, true))
                     {
                         actions.settings_changed = true;
                     }
@@ -1478,7 +1473,7 @@ namespace meccha
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.12f, 0.13f, 0.12f, 0.85f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.18f, 0.20f, 0.15f, 0.95f));
                     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-                    std::string copy_all_btn = std::string("    ") + _L("Copy All");
+                    std::string copy_all_btn = std::string("    ") + "Copy All";
                     if (ImGui::Button(copy_all_btn.c_str(), ImVec2(104.0f, 24.0f)))
                         actions.copy_log_clicked = true;
                     draw_copy_icon(ImVec2(ImGui::GetItemRectMin().x + 7.0f, ImGui::GetItemRectMin().y + 4.0f), ImGui::GetColorU32(Muted));
