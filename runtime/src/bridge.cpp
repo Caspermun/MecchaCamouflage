@@ -37,15 +37,15 @@
 
 namespace
 {
-    constexpr int DefaultBridgePort = 47654;
+    constexpr int DefaultBridgePort = 47800;
     constexpr std::size_t MaxRequestBytes = 8 * 1024 * 1024;
     constexpr int ProcessEventVtableIndex = 0x4C;
     constexpr int AutoEventWatchSampleBytes = 8192;
     constexpr UINT PaintDispatchMessage = WM_APP + 0x4D43;
     constexpr int ServerPaintBatchStrokeLimit = 50;
     constexpr int ServerPaintBatchStrokeLimitMax = 50;
-    constexpr int ServerPaintBatchDelayMs = 150;
-    constexpr int MeshFirstServerBatchMinDelayMs = 150;
+    constexpr int ServerPaintBatchDelayMs = 75;
+    constexpr int MeshFirstServerBatchMinDelayMs = 50;
     constexpr int MeshFirstAdaptiveFallbackMaxStrokesPerTick = 24;
     constexpr int MeshFirstAdaptiveFallbackMaxOutgoingStrokesPerBatch = 20;
     constexpr int MeshFirstAdaptiveFallbackOutgoingBatchesPerSecond = 20;
@@ -8706,6 +8706,9 @@ namespace
     struct MeshFirstServerBatchAsyncJob
     {
         std::shared_ptr<QueuedPaintJob> queued{};
+        std::uintptr_t controller{0};
+        std::uintptr_t pawn{0};
+        std::uintptr_t k2_get_pawn_function{0};
         std::uintptr_t component{0};
         std::uintptr_t relay_component{0};
         std::uintptr_t server_paint_batch_function{0};
@@ -9043,8 +9046,9 @@ namespace
 
     auto mesh_first_adaptive_clamp_delay(const std::shared_ptr<MeshFirstServerBatchAsyncJob>& job, int value) -> int
     {
-        (void)value;
-        return mesh_first_adaptive_resolved_pacing(job);
+        const int requested = std::clamp(value, MeshFirstServerBatchMinDelayMs, MeshFirstAdaptiveMaxDelayMs);
+        const int resolved = mesh_first_adaptive_resolved_pacing(job);
+        return std::clamp(std::max(requested, resolved), MeshFirstServerBatchMinDelayMs, MeshFirstAdaptiveMaxDelayMs);
     }
 
     void mesh_first_set_adaptive_effective(const std::shared_ptr<MeshFirstServerBatchAsyncJob>& job,
@@ -9756,15 +9760,17 @@ namespace
         const bool replay_front_enabled = front_region_mode != MeshFirstRegionMode::Skip;
         const bool replay_side_enabled = side_region_mode != MeshFirstRegionMode::Skip;
         const bool replay_back_enabled = back_region_mode != MeshFirstRegionMode::Skip;
+        const int tuning_server_batch_limit = json_int_field(request, "server_batch_limit", ServerPaintBatchStrokeLimit, 1, ServerPaintBatchStrokeLimitMax);
+        const int tuning_server_batch_delay_ms = json_int_field(request, "server_batch_delay_ms", ServerPaintBatchDelayMs, 50, 100);
         const bool any_paint_region = enable_front || enable_side || enable_back;
         const bool preview_only = json_bool_field(request, "preview_only", false);
         const bool unpreview_only = json_bool_field(request, "unpreview_only", false);
         const bool normal_paint_requires_packed = !preview_only && !unpreview_only;
         const int packed_server_batch_limit = MeshFirstAdaptiveFallbackMaxOutgoingStrokesPerBatch;
-        const int packed_server_batch_seed_delay_ms = MeshFirstServerBatchMinDelayMs;
+        const int packed_server_batch_seed_delay_ms = tuning_server_batch_delay_ms;
         const bool research_artifacts = json_bool_field(request, "research_artifacts", false);
-        const double tuning_stroke_size_texels = clamp_range(json_number_field(request, "stroke_size_texels", 9.0), 1.0, 12.0);
-        const double tuning_coverage_step_texels = clamp_range(json_number_field(request, "coverage_step_texels", 9.0), 1.0, 12.0);
+        const double tuning_stroke_size_texels = clamp_range(json_number_field(request, "stroke_size_texels", 5.0), 1.0, 10.0);
+        const double tuning_coverage_step_texels = clamp_range(json_number_field(request, "coverage_step_texels", 5.0), 1.0, 10.0);
         const double tuning_side_source_max_uv = clamp_range(json_number_field(request, "side_source_max_uv", 0.08), 0.001, 0.50);
         const double tuning_front_back_source_max_uv = clamp_range(json_number_field(request, "front_back_source_max_uv", 0.45), 0.001, 2.00);
         const bool tuning_auto_material_properties = json_bool_field(request, "auto_material_properties", true);
@@ -9777,8 +9783,6 @@ namespace
         const double fill_roughness = clamp_range(json_number_field(request, "fill_roughness", 0.0), 0.0, 1.0);
         const bool tuning_adaptive_batch_enabled = json_bool_field(request, "adaptive_batch_enabled", true);
         const bool tuning_allow_unsafe_paint = json_bool_field(request, "allow_unsafe_paint", false);
-        const int tuning_server_batch_limit = json_int_field(request, "server_batch_limit", ServerPaintBatchStrokeLimit, 1, ServerPaintBatchStrokeLimitMax);
-        const int tuning_server_batch_delay_ms = json_int_field(request, "server_batch_delay_ms", ServerPaintBatchDelayMs, 150, 500);
         const std::string requested_server_batch_rpc = json_string_field(request, "server_batch_rpc", "");
         const std::string requested_server_batch_rpc_normalized = lower_copy(requested_server_batch_rpc);
         const std::string requested_packed_route = lower_copy(json_string_field(request, "packed_route", "component"));
@@ -11263,6 +11267,9 @@ namespace
         {
             auto async_job = std::make_shared<MeshFirstServerBatchAsyncJob>();
             async_job->queued = queued_job;
+            async_job->controller = ctx.controller;
+            async_job->pawn = ctx.pawn;
+            async_job->k2_get_pawn_function = ctx.k2_get_pawn_function;
             async_job->component = ctx.component;
             async_job->relay_component = ctx.relay_component;
             async_job->server_paint_batch_function = ctx.server_paint_batch_function;
@@ -11885,6 +11892,40 @@ namespace
             return;
         }
         job->next_dispatch_time = {};
+
+        auto active_context_still_matches = [&]() -> bool {
+            if (!live_uobject(job->component))
+            {
+                finish_failed("mesh_paint_context_changed",
+                              "Paint stopped because the game paint component is no longer available",
+                              "paint_component_unavailable");
+                return false;
+            }
+            if (!live_uobject(job->controller) || !job->k2_get_pawn_function)
+            {
+                // Freecam and spectator-like states can detach the local pawn while
+                // the paint component and packed RPC target are still valid.
+                return true;
+            }
+
+            sdk::Controller_K2_GetPawn pawn_params{};
+            std::string process_failure{};
+            if (!process_event(job->controller, job->k2_get_pawn_function, reinterpret_cast<std::uint8_t*>(&pawn_params), process_failure))
+            {
+                return true;
+            }
+            const auto current_pawn = reinterpret_cast<std::uintptr_t>(pawn_params.ReturnValue);
+            if (!live_uobject(current_pawn))
+            {
+                return true;
+            }
+            return true;
+        };
+
+        if (!active_context_still_matches())
+        {
+            return;
+        }
 
         if (job->phase == MeshFirstBatchPhase::Planning)
         {

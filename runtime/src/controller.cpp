@@ -647,7 +647,7 @@ namespace
     {
         SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (s == INVALID_SOCKET)
-            return 47654;
+            return 47800;
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         inet_pton(AF_INET, host.c_str(), &addr.sin_addr);
@@ -655,14 +655,14 @@ namespace
         if (bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR)
         {
             closesocket(s);
-            return 47654;
+            return 47800;
         }
         sockaddr_in bound{};
         int len = sizeof(bound);
         getsockname(s, reinterpret_cast<sockaddr*>(&bound), &len);
         const int port = ntohs(bound.sin_port);
         closesocket(s);
-        return port > 0 ? port : 47654;
+        return port > 0 ? port : 47800;
     }
 
     auto parse_response(std::string raw) -> BridgeResponse

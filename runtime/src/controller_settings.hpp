@@ -17,15 +17,15 @@ namespace meccha
 
     struct PaintTuning
     {
-        double stroke_size_texels{6.0};
-        double coverage_step_texels{6.0};
+        double stroke_size_texels{5.0};
+        double coverage_step_texels{5.0};
         double side_source_max_uv{0.08};
         double front_back_source_max_uv{0.45};
         RegionMode front_region_mode{RegionMode::Fill};
         RegionMode side_region_mode{RegionMode::Paint};
         RegionMode back_region_mode{RegionMode::Paint};
         int server_batch_limit{50};
-        int server_batch_delay_ms{150};
+        int server_batch_delay_ms{75};
         bool auto_material_properties{false};
         double metallic{0.0};
         double roughness{1.0};
@@ -62,7 +62,7 @@ namespace meccha
         bool show_info{true};
         bool show_warning{true};
         bool show_error{true};
-        int bridge_port{50262};
+        int bridge_port{47800};
         std::vector<PresetProfile> presets{};
         int selected_preset_index{0};
         std::vector<std::string> color_swatches{};

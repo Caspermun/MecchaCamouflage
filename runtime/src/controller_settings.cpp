@@ -363,14 +363,14 @@ namespace meccha
         settings.panel_width = std::max(1100.0f, settings.panel_width);
         settings.panel_height = std::max(720.0f, settings.panel_height);
         settings.opacity = static_cast<float>(clamp_double(settings.opacity, 0.35, 1.0));
-        settings.tuning.stroke_size_texels = clamp_double(settings.tuning.stroke_size_texels, 1.0, 12.0);
-        settings.tuning.coverage_step_texels = clamp_double(settings.tuning.coverage_step_texels, 1.0, 12.0);
+        settings.tuning.stroke_size_texels = clamp_double(settings.tuning.stroke_size_texels, 1.0, 10.0);
+        settings.tuning.coverage_step_texels = clamp_double(settings.tuning.coverage_step_texels, 1.0, 10.0);
         settings.tuning.side_source_max_uv = clamp_double(settings.tuning.side_source_max_uv, 0.001, 0.50);
         settings.tuning.front_back_source_max_uv = clamp_double(settings.tuning.front_back_source_max_uv, 0.001, 2.00);
         settings.tuning.metallic = clamp_double(settings.tuning.metallic, 0.0, 1.0);
         settings.tuning.roughness = clamp_double(settings.tuning.roughness, 0.0, 1.0);
         settings.tuning.server_batch_limit = std::max(1, std::min(50, settings.tuning.server_batch_limit));
-        settings.tuning.server_batch_delay_ms = std::max(150, std::min(500, settings.tuning.server_batch_delay_ms));
+        settings.tuning.server_batch_delay_ms = std::max(50, std::min(100, settings.tuning.server_batch_delay_ms));
         settings.tuning.fill_color_r = clamp_double(settings.tuning.fill_color_r, 0.0, 1.0);
         settings.tuning.fill_color_g = clamp_double(settings.tuning.fill_color_g, 0.0, 1.0);
         settings.tuning.fill_color_b = clamp_double(settings.tuning.fill_color_b, 0.0, 1.0);
@@ -482,7 +482,7 @@ namespace meccha
             fast.name = "Fast Multiplayer Paint";
             fast.tuning = settings.tuning;
             fast.tuning.server_batch_limit = 50;
-            fast.tuning.server_batch_delay_ms = 150;
+            fast.tuning.server_batch_delay_ms = 50;
             settings.presets.push_back(fast);
 
             PresetProfile metal{};
