@@ -503,6 +503,23 @@ namespace
         std::string out;
         for (const char* key : {
                  "route",
+                 "mesh_profile_ok",
+                 "profile_id",
+                 "mesh_profile_lod",
+                 "texture_size",
+                 "planner_samples_enabled",
+                 "unsafe_enabled",
+                 "stroke_radius_texels",
+                 "stroke_size_texels",
+                 "coverage_step_texels",
+                 "planner_coverage_step_texels",
+                 "runtime_triangle_world_rebuild_avg_delta",
+                 "runtime_triangle_coordinate_max_avg_error",
+                 "runtime_triangle_raw_projection_inside_view",
+                 "runtime_triangle_projection_inside_view",
+                 "runtime_triangle_cache_warmup_pre_avg_error",
+                 "runtime_triangle_cache_warmup_post_avg_error",
+                 "runtime_triangle_cache_triangles",
                  "mesh_first_pipeline",
                  "preview_only",
                  "unpreview_only",
@@ -13431,7 +13448,10 @@ namespace
             if (const auto p = find_property_any(ref, st, {"Pitch"})) { out.Pitch = sdk_read_number(ref, p, base); read = true; }
             if (const auto p = find_property_any(ref, st, {"Yaw"})) { out.Yaw = sdk_read_number(ref, p, base); read = true; }
             if (const auto p = find_property_any(ref, st, {"Roll"})) { out.Roll = sdk_read_number(ref, p, base); read = true; }
-            return read && std::isfinite(out.Pitch) && std::isfinite(out.Yaw) && std::isfinite(out.Roll);
+            if (read && std::isfinite(out.Pitch) && std::isfinite(out.Yaw) && std::isfinite(out.Roll))
+            {
+                return true;
+            }
         }
         const auto size = prop_element_size(prop);
         if (size >= 24)
@@ -13465,7 +13485,10 @@ namespace
             if (const auto p = find_property_any(ref, st, {"Y"})) { out.Y = sdk_read_number(ref, p, base); read = true; }
             if (const auto p = find_property_any(ref, st, {"Z"})) { out.Z = sdk_read_number(ref, p, base); read = true; }
             if (const auto p = find_property_any(ref, st, {"W"})) { out.W = sdk_read_number(ref, p, base); read = true; }
-            return read && std::isfinite(out.X) && std::isfinite(out.Y) && std::isfinite(out.Z) && std::isfinite(out.W);
+            if (read && std::isfinite(out.X) && std::isfinite(out.Y) && std::isfinite(out.Z) && std::isfinite(out.W))
+            {
+                return true;
+            }
         }
         const auto size = prop_element_size(prop);
         if (size >= 32)
@@ -13508,7 +13531,10 @@ namespace
             {
                 read = sdk_read_vector3(ref, p, base, out.Scale3D) || read;
             }
-            return read && sdk_transform_finite(out);
+            if (read && sdk_transform_finite(out))
+            {
+                return true;
+            }
         }
         const auto size = prop_element_size(prop);
         if (size >= static_cast<int>(sizeof(sdk::FTransform)))
